@@ -1,0 +1,1 @@
+g++ visualization.cpp -o visualization  -L/usr/local/lib -losg -lOpenThreads -losgDB -losgGA -losgUtil -losgViewer -losgEarth -losgEarthUtil
