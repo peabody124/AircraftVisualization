@@ -144,6 +144,80 @@ void singleWindow(osgViewer::Viewer *viewer)
     }
 }
 
+osg::MatrixTransform* uavAttitudeAndScale;
+osgEarth::MapNode* mapNode;
+osgEarth::Util::ObjectLocatorNode* uavPos;
+
+osg::Node* createAirplane()
+{
+    osg::Group* model = new osg::Group;
+    osg::Node *uav;
+
+    uav = osgDB::readNodeFile("/Users/Cotton/Programming/OpenPilot/artwork/3D Model/multi/joes_cnc/J14-QT_+.3DS");
+
+    if(uav) {
+        uavAttitudeAndScale = new osg::MatrixTransform();
+        uavAttitudeAndScale->setMatrix(osg::Matrixd::scale(0.2e0,0.2e0,0.2e0));
+
+        // Apply a rotation so model is NED before any other rotations
+        osg::MatrixTransform *rotateModelNED = new osg::MatrixTransform();
+        rotateModelNED->setMatrix(osg::Matrixd::scale(0.05e0,0.05e0,0.05e0) * osg::Matrixd::rotate(M_PI, osg::Vec3d(0,0,1)));
+        rotateModelNED->addChild( uav );
+
+        uavAttitudeAndScale->addChild( rotateModelNED );
+
+        model->addChild(uavAttitudeAndScale);
+    } 
+
+    return model;
+}
+
+/*
+osg::Camera* createCamera( int x, int y, int w, int h, const std::string& name="", bool windowDecoration=false )
+{
+    osg::DisplaySettings* ds = osg::DisplaySettings::instance().get();
+    osg::ref_ptr<osg::GraphicsContext::Traits> traits = new osg::GraphicsContext::Traits;
+    traits->windowName = name;
+    traits->windowDecoration = windowDecoration;
+    traits->x = x;
+    traits->y = y;
+    traits->width = w;
+    traits->height = h;
+    traits->doubleBuffer = true;
+    traits->alpha = ds->getMinimumNumAlphaBits();
+    traits->stencil = ds->getMinimumNumStencilBits();
+    traits->sampleBuffers = ds->getMultiSamples();
+    traits->samples = ds->getNumMultiSamples();
+
+    osg::ref_ptr<osg::Camera> camera = new osg::Camera;
+    camera->setGraphicsContext( new osgQt::GraphicsWindowQt(traits.get()) );
+
+    camera->setClearColor( osg::Vec4(0.2, 0.2, 0.6, 1.0) );
+    camera->setViewport( new osg::Viewport(0, 0, traits->width, traits->height) );
+    camera->setProjectionMatrixAsPerspective(
+                30.0f, static_cast<double>(traits->width)/static_cast<double>(traits->height), 1.0f, 10000.0f );
+    return camera.release();
+}
+*/
+
+/**
+ * Update the position of the UAV
+ */
+void updatePosition(double *LLA, double *quat)
+{
+    uavPos->getLocator()->setPosition( osg::Vec3d(LLA[1], LLA[0], LLA[2]) );  // Note this takes longtitude first
+
+    // Set the attitude (reverse the attitude)
+    // Have to rotate the axes from OP NED frame to OSG frame (X east, Y north, Z down)
+    osg::Quat q(quat[1],quat[2],quat[3],quat[0]);
+    double angle;
+    osg::Vec3d axis;
+    q.getRotate(angle,axis);
+    q.makeRotate(angle, osg::Vec3d(axis[1],axis[0],-axis[2]));
+    osg::Matrixd rot = osg::Matrixd::rotate(q);
+
+    uavAttitudeAndScale->setMatrix(rot);
+}
 
 /**
  * The matlab entry function
@@ -159,17 +233,16 @@ int main()
     // Create a root node
     osg::Group *root = new osg::Group;
 
-    // Plot the cells
-    osg::ref_ptr<osg::Group> group = new osg::Group;
-
     osg::Node* earth = osgDB::readNodeFile("/Users/Cotton/Programming/osg/osgearth/tests/boston.earth");
-    //mapNode = osgEarth::MapNode::findMapNode( earth );
+    mapNode = osgEarth::MapNode::findMapNode( earth );
+
+    osg::Node* airplane = createAirplane();
+    uavPos = new osgEarth::Util::ObjectLocatorNode(mapNode->getMap());
+    uavPos->getLocator()->setPosition( osg::Vec3d(-71.100549, 42.349273, 200) );
+    uavPos->addChild(airplane);
 
     root->addChild(earth);
-
-    osg::ref_ptr<osg::PositionAttitudeTransform> pat = new osg::PositionAttitudeTransform();
-    pat->addChild(group);
-    pat->setScale(osg::Vec3(1,1,2));
+    root->addChild(uavPos);
 
     if (global->viewer == NULL)
         global->viewer = new osgViewer::Viewer();
@@ -177,17 +250,26 @@ int main()
 
     osg::ref_ptr<EarthManipulator> manip = new EarthManipulator();
 
-    global->viewer->setCameraManipulator( manip );   
-    
     global->viewer->addEventHandler(new osgViewer::StatsHandler);
     global->viewer->addEventHandler(new osgViewer::ThreadingHandler);
     global->viewer->addEventHandler(new KeyEventHandler(global->viewer));
     global->viewer->setSceneData(root);
     
     global->viewer->realize();
+
+    global->viewer->setCameraManipulator( manip );
+    manip->setViewpoint( Viewpoint(-71.100549, 42.349273, 200, 180, -25, 350.0), 10.0 );
+    manip->setTetherNode(uavPos);
+
+    double LLA[] = {42.349273, -71.100549, 100};
+    double quat[] = {1,0,0,0};
+
+    double pitch = -45;
     while(!global->viewer->done())
     {
         global->viewer->frame();
+        updatePosition(LLA, quat);
+        LLA[2] += 0.01;
     }
 
     // Release the viewer
