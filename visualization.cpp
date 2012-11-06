@@ -80,6 +80,9 @@ struct global_struct {
     //! The manipulator for the main view
     osg::ref_ptr<EarthManipulator> manip;
 
+    //! Handle to the visualization thread
+    pthread_t vis_thread;
+
     enum magic_value magic;
 };
 
@@ -275,8 +278,10 @@ struct global_struct * initialize()
     return g;
 }
 
-void startRunThread(global_struct *g)
+void *run_thread(void * arg)
 {
+    struct global_struct *g = (struct global_struct *) arg;
+    
     double LLA[] = {42.349273, -71.100549, 500};
     double quat[] = {1,0,0,0};
     double pitch = -45;
@@ -293,6 +298,20 @@ void startRunThread(global_struct *g)
 
         g->viewer->frame();
     }
+    return NULL;
+}
+
+/**
+ * Create a thread to run the visualization
+ */
+void startRunThread(global_struct *g)
+{
+     // Set up the thread parameters
+    pthread_attr_t xThreadAttributes;
+    pthread_attr_init( &xThreadAttributes );
+    pthread_attr_setdetachstate( &xThreadAttributes, PTHREAD_CREATE_DETACHED );
+
+    pthread_create(&g->vis_thread, &xThreadAttributes, run_thread, g);   
 }
 
 void shutdown(struct global_struct *g)
@@ -325,6 +344,9 @@ int main()
     struct global_struct *g = initialize();
 
     startRunThread(g);
+
+    while(1);
+    pthread_join(g->vis_thread, NULL);
 
     shutdown(g);
 
