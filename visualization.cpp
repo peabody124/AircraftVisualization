@@ -11,14 +11,20 @@
 #include <osg/TexEnv>
 #include <osg/PositionAttitudeTransform>
 #include <osg/ShapeDrawable>
+
 #include <osgDB/ReadFile>
 #include <osgDB/WriteFile>
+
+#include <osgViewer/CompositeViewer>
 #include <osgViewer/Viewer>
 #include <osgViewer/ViewerEventHandlers>
+
 #include <osgGA/NodeTrackerManipulator>
 #include <osgGA/TrackballManipulator>
 #include <osgGA/FlightManipulator>
+#include <osgGA/StateSetManipulator>
 #include <osgGA/AnimationPathManipulator>
+
 #include <iostream>
 
 #include <osgEarth/MapNode>
@@ -55,7 +61,7 @@ enum magic_value { MAGIC_VALUE = 0xAF01BC32 };
 //! Data preserved between runs
 struct global_struct {
     int runs;
-    osgViewer::Viewer *viewer;
+    osgViewer::CompositeViewer *viewer;
     enum magic_value magic;
 };
 
@@ -90,7 +96,7 @@ public:
 /**
  * Set up the display window so it can be resized.  Default to full scale
  */
-osg::ref_ptr<osg::Camera> singleWindow(osgViewer::Viewer *viewer)
+void singleWindow(osgViewer::CompositeViewer *viewer, osg::Node *root)
 {
     osg::GraphicsContext::WindowingSystemInterface* wsi = osg::GraphicsContext::getWindowingSystemInterface();
     
@@ -124,6 +130,41 @@ osg::ref_ptr<osg::Camera> singleWindow(osgViewer::Viewer *viewer)
         osg::notify(osg::NOTICE)<<"  GraphicsWindow has not been created successfully."<<std::endl;
     }
 
+    /********* First view ***********/
+    {
+        osgViewer::View *view = new osgViewer::View;
+        view->setName("Chase cam");
+        osg::ref_ptr<osg::Camera> cam = view->getCamera();
+        cam->setGraphicsContext(gc.get());
+        cam->setViewport(0, 0, width/2, height/2);
+        viewer->addView(view);
+
+        view->setSceneData(root);
+        view->setCameraManipulator(new osgGA::TrackballManipulator);
+        // add the state manipulator
+        osg::ref_ptr<osgGA::StateSetManipulator> statesetManipulator = new osgGA::StateSetManipulator;
+        statesetManipulator->setStateSet(view->getCamera()->getOrCreateStateSet());
+
+        view->addEventHandler( statesetManipulator.get() );
+    }
+    /********* Second view ***********/
+    {
+        osgViewer::View* view = new osgViewer::View;
+        view->setName("Camera view");
+        osg::ref_ptr<osg::Camera> cam = view->getCamera();
+        cam->setGraphicsContext(gc.get());
+        cam->setViewport(width/2, 0, width/2, height/2);
+
+        viewer->addView(view);
+
+        view->setSceneData(root);
+        view->setCameraManipulator(new osgGA::TrackballManipulator);
+
+        view->addEventHandler( new osgViewer::StatsHandler );
+    }
+
+
+/*
     unsigned int numCameras = 2;
     double aspectRatioScale = 1.0;///(double)numCameras;
     osg::ref_ptr<osg::Camera> camera;
@@ -138,9 +179,9 @@ osg::ref_ptr<osg::Camera> singleWindow(osgViewer::Viewer *viewer)
 
         if (i == 0) 
             viewer->addSlave(camera.get(), osg::Matrixd(), osg::Matrixd::scale(aspectRatioScale,1.0,1.0));
-    }
+    } */
 
-    return camera;
+    return;
 }
 
 osg::MatrixTransform* uavAttitudeAndScale;
@@ -230,7 +271,7 @@ int main()
     global->magic = MAGIC_VALUE;
 
     // Create a root node
-    osg::Group *root = new osg::Group;
+    osg::ref_ptr<osg::Group> root = new osg::Group;
 
     osg::Node* earth = osgDB::readNodeFile("/Users/Cotton/Programming/osg/osgearth/tests/boston.earth");
     mapNode = osgEarth::MapNode::findMapNode( earth );
@@ -244,28 +285,22 @@ int main()
     root->addChild(uavPos);
 
     if (global->viewer == NULL)
-        global->viewer = new osgViewer::Viewer();
-    osg::ref_ptr<osg::Camera> uavCamera = singleWindow(global->viewer);
+        global->viewer = new osgViewer::CompositeViewer();
+    singleWindow(global->viewer, root);
 
     osg::ref_ptr<EarthManipulator> manip = new EarthManipulator();
 
-    global->viewer->addEventHandler(new osgViewer::StatsHandler);
+/*    global->viewer->addEventHandler(new osgViewer::StatsHandler);
     global->viewer->addEventHandler(new osgViewer::ThreadingHandler);
-    global->viewer->addEventHandler(new KeyEventHandler(global->viewer));
-    global->viewer->setSceneData(root);
+    global->viewer->addEventHandler(new KeyEventHandler(global->viewer)); 
+    global->viewer->setSceneData(root); */
     
     global->viewer->realize();
 
     osg::Matrix projectionOffset;
     osg::Matrix viewOffset;
 
-    viewOffset.makeIdentity();
-    viewOffset.makeTranslate( osg::Vec3f(100,100,100) );
-    projectionOffset.makeIdentity();
-    //projectionOffset.makeTranslate( osg::Vec3f(100,100,100) );
-
-    global->viewer->addSlave(uavCamera, projectionOffset, viewOffset);
-    global->viewer->setCameraManipulator(manip);
+    global->viewer->getView(0)->setCameraManipulator(manip);
     manip->setViewpoint( Viewpoint(-71.100549, 42.349273, 200, 180, -25, 350.0), 10.0 );
     manip->setTetherNode(uavPos);
 
@@ -284,7 +319,6 @@ int main()
 
         osg::Matrix pos;
         uavPos->getLocator()->getPositionMatrix(pos);
-        //uavCamera->setViewMatrix(pos);
         global->viewer->frame();
     }
 
