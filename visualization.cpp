@@ -90,14 +90,9 @@ public:
 /**
  * Set up the display window so it can be resized.  Default to full scale
  */
-void singleWindow(osgViewer::Viewer *viewer)
+osg::ref_ptr<osg::Camera> singleWindow(osgViewer::Viewer *viewer)
 {
     osg::GraphicsContext::WindowingSystemInterface* wsi = osg::GraphicsContext::getWindowingSystemInterface();
-    if (!wsi) 
-    {
-        osg::notify(osg::NOTICE)<<"Error, no WindowSystemInterface available, cannot create windows."<<std::endl;
-        return;
-    }
     
     unsigned int width, height;
     wsi->getScreenResolution(osg::GraphicsContext::ScreenIdentifier(0), width, height);
@@ -129,19 +124,23 @@ void singleWindow(osgViewer::Viewer *viewer)
         osg::notify(osg::NOTICE)<<"  GraphicsWindow has not been created successfully."<<std::endl;
     }
 
-    unsigned int numCameras = 1;
+    unsigned int numCameras = 2;
     double aspectRatioScale = 1.0;///(double)numCameras;
+    osg::ref_ptr<osg::Camera> camera;
     for(unsigned int i=0; i<numCameras;++i)
     {
-        osg::ref_ptr<osg::Camera> camera = new osg::Camera;
+        camera = new osg::Camera;
         camera->setGraphicsContext(gc.get());
         camera->setViewport(new osg::Viewport((i*width)/numCameras,(i*height)/numCameras, width/numCameras, height/numCameras));
         GLenum buffer = traits->doubleBuffer ? GL_BACK : GL_FRONT;
         camera->setDrawBuffer(buffer);
         camera->setReadBuffer(buffer);
 
-        viewer->addSlave(camera.get(), osg::Matrixd(), osg::Matrixd::scale(aspectRatioScale,1.0,1.0));
+        if (i == 0) 
+            viewer->addSlave(camera.get(), osg::Matrixd(), osg::Matrixd::scale(aspectRatioScale,1.0,1.0));
     }
+
+    return camera;
 }
 
 osg::MatrixTransform* uavAttitudeAndScale;
@@ -246,7 +245,7 @@ int main()
 
     if (global->viewer == NULL)
         global->viewer = new osgViewer::Viewer();
-    singleWindow(global->viewer);
+    osg::ref_ptr<osg::Camera> uavCamera = singleWindow(global->viewer);
 
     osg::ref_ptr<EarthManipulator> manip = new EarthManipulator();
 
@@ -257,9 +256,21 @@ int main()
     
     global->viewer->realize();
 
-    global->viewer->setCameraManipulator( manip );
+    osg::Matrix projectionOffset;
+    osg::Matrix viewOffset;
+
+    viewOffset.makeIdentity();
+    viewOffset.makeTranslate( osg::Vec3f(100,100,100) );
+    projectionOffset.makeIdentity();
+    //projectionOffset.makeTranslate( osg::Vec3f(100,100,100) );
+
+    global->viewer->addSlave(uavCamera, projectionOffset, viewOffset);
+    global->viewer->setCameraManipulator(manip);
     manip->setViewpoint( Viewpoint(-71.100549, 42.349273, 200, 180, -25, 350.0), 10.0 );
     manip->setTetherNode(uavPos);
+
+    //uavCamera->setView(global->viewer);
+    //global->viewer->addSlave(uavCamera);
 
     double LLA[] = {42.349273, -71.100549, 100};
     double quat[] = {1,0,0,0};
@@ -267,9 +278,14 @@ int main()
     double pitch = -45;
     while(!global->viewer->done())
     {
-        global->viewer->frame();
+
         updatePosition(LLA, quat);
         LLA[2] += 0.01;
+
+        osg::Matrix pos;
+        uavPos->getLocator()->getPositionMatrix(pos);
+        //uavCamera->setViewMatrix(pos);
+        global->viewer->frame();
     }
 
     // Release the viewer
