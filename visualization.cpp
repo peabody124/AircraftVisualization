@@ -62,37 +62,25 @@ enum magic_value { MAGIC_VALUE = 0xAF01BC32 };
 
 //! Data preserved between runs
 struct global_struct {
-    int runs;
-    osgViewer::CompositeViewer *viewer;
+    //! The composite viewer for the scene
+    osg::ref_ptr<osgViewer::CompositeViewer> viewer;
+
+    //! The position that locates the UAV
+    osg::ref_ptr<osgEarth::Util::ObjectLocatorNode> uavPos;
+    //! The attitude of the UAV
+    osg::ref_ptr<osg::MatrixTransform> uavAttitudeAndScale;
+    //! The UAV node
+    osg::ref_ptr<osg::Node> uav;
+
+    osg::ref_ptr<osgEarth::MapNode> mapNode;
+
+    //! The tracker which makes the FPV camera track the UAV
+    osg::ref_ptr<osgGA::NodeTrackerManipulator> tracker;
+
+    //! The manipulator for the main view
+    osg::ref_ptr<EarthManipulator> manip;
+
     enum magic_value magic;
-};
-
-//! Pointer to the global data
-static struct global_struct  *global = NULL;
-
-//! Class that handles clicking objects in geometry
-class KeyEventHandler : public osgGA::GUIEventHandler
-{
-protected:
-   osgViewer::Viewer *m_viewer;
- 
-public:
-   KeyEventHandler(osgViewer::Viewer *node) : osgGA::GUIEventHandler()
-   {
-       m_viewer = node;
-   }
-
-   virtual bool handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActionAdapter& aa)
-   {
-       switch (ea.getEventType())
-       {
-           case(osgGA::GUIEventAdapter::PUSH):
-           break;
-           default:
-               return false;
-       }
-       return true;
-   }
 };
 
 /**
@@ -164,90 +152,40 @@ void singleWindow(osgViewer::CompositeViewer *viewer, osg::Node *root)
         view->addEventHandler( new osgViewer::StatsHandler );
     }
 
-
-/*
-    unsigned int numCameras = 2;
-    double aspectRatioScale = 1.0;///(double)numCameras;
-    osg::ref_ptr<osg::Camera> camera;
-    for(unsigned int i=0; i<numCameras;++i)
-    {
-        camera = new osg::Camera;
-        camera->setGraphicsContext(gc.get());
-        camera->setViewport(new osg::Viewport((i*width)/numCameras,(i*height)/numCameras, width/numCameras, height/numCameras));
-        GLenum buffer = traits->doubleBuffer ? GL_BACK : GL_FRONT;
-        camera->setDrawBuffer(buffer);
-        camera->setReadBuffer(buffer);
-
-        if (i == 0) 
-            viewer->addSlave(camera.get(), osg::Matrixd(), osg::Matrixd::scale(aspectRatioScale,1.0,1.0));
-    } */
-
     return;
 }
 
-osg::MatrixTransform* uavAttitudeAndScale;
-osgEarth::MapNode* mapNode;
-osgEarth::Util::ObjectLocatorNode* uavPos;
-osg::Node *uav;
 
-osg::Node* createAirplane()
+osg::Node* createAirplane(struct global_struct *g)
 {
-    osg::Group* model = new osg::Group;
+    osg::ref_ptr<osg::Group> model = new osg::Group;
 
-    uav = osgDB::readNodeFile("/Users/Cotton/Programming/OpenPilot/artwork/3D Model/multi/joes_cnc/J14-QT_+.3DS");
+    g->uav = osgDB::readNodeFile("/Users/Cotton/Programming/OpenPilot/artwork/3D Model/multi/joes_cnc/J14-QT_+.3DS");
 
-    if(uav) {
-        uavAttitudeAndScale = new osg::MatrixTransform();
-        uavAttitudeAndScale->setMatrix(osg::Matrixd::scale(0.2e0,0.2e0,0.2e0));
+    if(g->uav) {
+        g->uavAttitudeAndScale = new osg::MatrixTransform();
+        g->uavAttitudeAndScale->setMatrix(osg::Matrixd::scale(0.2e0,0.2e0,0.2e0));
 
         // Apply a rotation so model is NED before any other rotations
         osg::MatrixTransform *rotateModelNED = new osg::MatrixTransform();
         rotateModelNED->setMatrix(osg::Matrixd::scale(0.05e0,0.05e0,0.05e0) * osg::Matrixd::rotate(M_PI, osg::Vec3d(0,0,1)));
-        rotateModelNED->addChild( uav );
+        rotateModelNED->addChild( g->uav );
 
-        uavAttitudeAndScale->addChild( rotateModelNED );
+        g->uavAttitudeAndScale->addChild( rotateModelNED );
 
-        model->addChild(uavAttitudeAndScale);
+        model->addChild(g->uavAttitudeAndScale);
     } 
 
-    return model;
+    return model.release();
 }
-
-/*
-osg::Camera* createCamera( int x, int y, int w, int h, const std::string& name="", bool windowDecoration=false )
-{
-    osg::DisplaySettings* ds = osg::DisplaySettings::instance().get();
-    osg::ref_ptr<osg::GraphicsContext::Traits> traits = new osg::GraphicsContext::Traits;
-    traits->windowName = name;
-    traits->windowDecoration = windowDecoration;
-    traits->x = x;
-    traits->y = y;
-    traits->width = w;
-    traits->height = h;
-    traits->doubleBuffer = true;
-    traits->alpha = ds->getMinimumNumAlphaBits();
-    traits->stencil = ds->getMinimumNumStencilBits();
-    traits->sampleBuffers = ds->getMultiSamples();
-    traits->samples = ds->getNumMultiSamples();
-
-    osg::ref_ptr<osg::Camera> camera = new osg::Camera;
-    camera->setGraphicsContext( new osgQt::GraphicsWindowQt(traits.get()) );
-
-    camera->setClearColor( osg::Vec4(0.2, 0.2, 0.6, 1.0) );
-    camera->setViewport( new osg::Viewport(0, 0, traits->width, traits->height) );
-    camera->setProjectionMatrixAsPerspective(
-                30.0f, static_cast<double>(traits->width)/static_cast<double>(traits->height), 1.0f, 10000.0f );
-    return camera.release();
-}
-*/
 
 /**
  * Update the position of the UAV
  */
-void updatePosition(double *LLA, double *quat)
+void updatePosition(struct global_struct *g, double *LLA, double *quat)
 {
     static float angle = 0;
-    uavPos->getLocator()->setPosition( osg::Vec3d(LLA[1], LLA[0], LLA[2]) );  // Note this takes longtitude first
+    g->uavPos->getLocator()->setPosition( osg::Vec3d(LLA[1], LLA[0], LLA[2]) );  // Note this takes longtitude first
 
     // Set the attitude (reverse the attitude)
     // Have to rotate the axes from OP NED frame to OSG frame (X east, Y north, Z down)
@@ -261,13 +199,13 @@ void updatePosition(double *LLA, double *quat)
     q.makeRotate(angle, osg::Vec3d(0,0,1));
     osg::Matrixd rot = osg::Matrixd::rotate(q);
 
-    uavAttitudeAndScale->setMatrix(rot);
+    g->uavAttitudeAndScale->setMatrix(rot);
 }
 
 /**
  * Update the camera angle relative to the body
  */
-void updateCamera(osg::ref_ptr<osgGA::NodeTrackerManipulator> tracker, float pitch, float roll)
+void updateCamera(struct global_struct *g, float pitch, float roll)
 {
     osg::Matrixd yawMat, pitchMat, rollMat;
     
@@ -276,7 +214,106 @@ void updateCamera(osg::ref_ptr<osgGA::NodeTrackerManipulator> tracker, float pit
     yawMat.makeRotate(M_PI, osg::Vec3d(0,0,1));
 
     // We need a 180 degree yaw rotation to view "forward" with the quad
-    tracker->setByMatrix(yawMat * rollMat * pitchMat);
+    g->tracker->setByMatrix(yawMat * rollMat * pitchMat);
+}
+
+/**
+ * Initialize the scene and populate a structure that contains
+ * all the required handle for the rest of the functionality
+ */
+struct global_struct * initialize()
+{
+ // Initialize the global data if it doesn't exist
+    struct global_struct *g = (struct global_struct *) malloc(sizeof(struct global_struct));
+    g->viewer = NULL;
+    g->magic = MAGIC_VALUE;
+
+    // Create a root node
+    osg::ref_ptr<osg::Group> root = new osg::Group;
+
+    osg::Node* earth = osgDB::readNodeFile("/Users/Cotton/Programming/osg/osgearth/tests/boston.earth");
+    g->mapNode = osgEarth::MapNode::findMapNode( earth );
+
+    osg::Node* airplane = createAirplane(g);
+    g->uavPos = new osgEarth::Util::ObjectLocatorNode(g->mapNode->getMap());
+    g->uavPos->getLocator()->setPosition( osg::Vec3d(-71.100549, 42.349273, 200) );
+    g->uavPos->addChild(airplane);
+
+    root->addChild(earth);
+    root->addChild(g->uavPos);
+
+    osgUtil::Optimizer optimizer;
+    optimizer.optimize(root);
+
+    if (g->viewer == NULL)
+        g->viewer = new osgViewer::CompositeViewer();
+    singleWindow(g->viewer, root);
+
+    g->viewer->getView(0)->addEventHandler(new osgViewer::StatsHandler);
+    g->viewer->getView(0)->addEventHandler(new osgViewer::ThreadingHandler);
+    
+    g->viewer->realize();
+
+    osg::Matrix projectionOffset;
+    osg::Matrix viewOffset;
+
+    g->manip = new EarthManipulator();
+    g->viewer->getView(0)->setCameraManipulator(g->manip);
+    g->manip->setViewpoint( Viewpoint(-71.100549, 42.349273, 200, 180, -25, 350.0), 10.0 );
+    g->manip->setTetherNode(g->uavPos);
+
+    g->tracker = new osgGA::NodeTrackerManipulator();
+    g->tracker->setTrackerMode( osgGA::NodeTrackerManipulator::NODE_CENTER_AND_ROTATION );
+    g->tracker->setNode(g->uav);
+    g->tracker->setTrackNode(g->uav);
+    g->tracker->setMinimumDistance(100); 
+    g->tracker->setDistance(500); 
+    g->tracker->setElevation(300); 
+    g->tracker->setHomePosition( osg::Vec3f(0.f,40.f,40.f), osg::Vec3f(0.f,0.f,0.f), osg::Vec3f(0,0,1) ); 
+    g->viewer->getView(1)->setCameraManipulator(g->tracker);
+
+    return g;
+}
+
+void startRunThread(global_struct *g)
+{
+    double LLA[] = {42.349273, -71.100549, 500};
+    double quat[] = {1,0,0,0};
+    double pitch = -45;
+
+    while(!g->viewer->done())
+    {
+        pitch+=0.1;
+        if (pitch > 45)
+            pitch = -45;
+
+        updatePosition(g, LLA, quat);
+        updateCamera(g, pitch, 20);
+        LLA[1] += 0.00001;
+
+        g->viewer->frame();
+    }
+}
+
+void shutdown(struct global_struct *g)
+{
+  // TODO: Clean up weak pointers properly
+    /*
+  //! The composite viewer for the scene
+    //g->viewer->release();
+
+    free(g->uavPos);
+    free(g->uavAttitudeAndScale);
+    free(g->uav);
+    free(g->mapNode);
+    free(g->tracker);
+    free(g->manip);
+
+    // Release the viewer
+    delete(g->viewer);
+    g->viewer = NULL;
+    */
+    free(g);
 }
 
 /**
@@ -284,88 +321,13 @@ void updateCamera(osg::ref_ptr<osgGA::NodeTrackerManipulator> tracker, float pit
  */
 int main()
 {
-    // Initialize the global data if it doesn't exist
-    global = (struct global_struct *) malloc(sizeof(*global));
-    global->runs = 0;
-    global->viewer = NULL;
-    global->magic = MAGIC_VALUE;
 
-    // Create a root node
-    osg::ref_ptr<osg::Group> root = new osg::Group;
+    struct global_struct *g = initialize();
 
-    osg::Node* earth = osgDB::readNodeFile("/Users/Cotton/Programming/osg/osgearth/tests/boston.earth");
-    mapNode = osgEarth::MapNode::findMapNode( earth );
+    startRunThread(g);
 
-    osg::Node* airplane = createAirplane();
-    uavPos = new osgEarth::Util::ObjectLocatorNode(mapNode->getMap());
-    uavPos->getLocator()->setPosition( osg::Vec3d(-71.100549, 42.349273, 200) );
-    uavPos->addChild(airplane);
+    shutdown(g);
 
-    root->addChild(earth);
-    root->addChild(uavPos);
-
-    osgUtil::Optimizer optimizer;
-    optimizer.optimize(root);
-
-    if (global->viewer == NULL)
-        global->viewer = new osgViewer::CompositeViewer();
-    singleWindow(global->viewer, root);
-
-    osg::ref_ptr<EarthManipulator> manip = new EarthManipulator();
-
-    global->viewer->getView(0)->addEventHandler(new osgViewer::StatsHandler);
-    global->viewer->getView(0)->addEventHandler(new osgViewer::ThreadingHandler);
-    
-    global->viewer->realize();
-
-    osg::Matrix projectionOffset;
-    osg::Matrix viewOffset;
-
-    global->viewer->getView(0)->setCameraManipulator(manip);
-    manip->setViewpoint( Viewpoint(-71.100549, 42.349273, 200, 180, -25, 350.0), 10.0 );
-    manip->setTetherNode(uavPos);
-
-    osg::ref_ptr<osgGA::NodeTrackerManipulator> tracker = new osgGA::NodeTrackerManipulator();
-    tracker->setTrackerMode( osgGA::NodeTrackerManipulator::NODE_CENTER_AND_ROTATION );
-    tracker->setNode(uav);
-    tracker->setTrackNode(uav);
-    tracker->setMinimumDistance(100); 
-    tracker->setDistance(500); 
-    tracker->setElevation(300); 
-    tracker->setHomePosition( osg::Vec3f(0.f,40.f,40.f), osg::Vec3f(0.f,0.f,0.f), osg::Vec3f(0,0,1) ); 
-    global->viewer->getView(1)->setCameraManipulator(tracker);
-
-    double LLA[] = {42.349273, -71.100549, 500};
-    double quat[] = {1,0,0,0};
-
-    double pitch = -45;
-    while(!global->viewer->done())
-    {
-
-        /*quat[1] += 0.001;
-        quat[2] += 0.001;
-        double quat_n = sqrtf(quat[0]*quat[0] + quat[1]*quat[1] + quat[2]*quat[2] + quat[3]*quat[3]);
-        quat[0] /= quat_n;
-        quat[1] /= quat_n;
-        quat[2] /= quat_n;
-        quat[3] /= quat_n;*/
-        pitch+=0.1;
-        if (pitch > 45)
-            pitch = -45;
-
-        updatePosition(LLA, quat);
-        updateCamera(tracker, pitch, 20);
-        LLA[1] += 0.00001;
-
-        osg::Matrix pos;
-        uavPos->getLocator()->getPositionMatrix(pos);
-        global->viewer->frame();
-    }
-
-    // Release the viewer
-    delete(global->viewer);
-    global->viewer = NULL;
-    
     return 0;
 }
 
