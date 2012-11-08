@@ -1,1 +1,1 @@
-g++ visualization.cpp -o visualization  -L/usr/local/lib -losg -lOpenThreads -losgDB -losgGA -losgUtil -losgViewer -losgEarth -losgEarthUtil
+g++ visualization.cpp hat.cpp terrain.cpp trees.cpp sky.cpp -o visualization  -L/usr/local/lib -losg -lOpenThreads -losgDB -losgGA -losgUtil -losgViewer -losgEarth -losgEarthUtil
