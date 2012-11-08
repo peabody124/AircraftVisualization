@@ -87,6 +87,14 @@ using namespace osgEarth::Symbology;
 using namespace osgEarth::Drivers;
 using namespace osgEarth::Annotation;
 
+//! Structure transferred over the network
+struct uav_data {
+    double q[4];
+    double NED[3];
+    double roll;
+    double pitch;
+};
+
 //! Magic value to check the static data
 enum magic_value { MAGIC_VALUE = 0xAF01BC32 };
 
@@ -116,6 +124,7 @@ struct global_struct {
     enum magic_value magic;
 };
 
+//! Provide an error message
 void diep(char *s)
 {
     perror(s);
@@ -194,7 +203,9 @@ void singleWindow(osgViewer::CompositeViewer *viewer, osg::Node *root)
     return;
 }
 
-
+/**
+ * Load the UAV model and attach it to a position and rotation node
+ */
 osg::Node* createAirplane(struct global_struct *g)
 {
     osg::ref_ptr<osg::Group> model = new osg::Group;
@@ -278,7 +289,7 @@ void updateCamera(struct global_struct *g, float pitch, float roll)
  */
 struct global_struct * initialize()
 {
- // Initialize the global data if it doesn't exist
+    // Initialize the global data if it doesn't exist
     struct global_struct *g = (struct global_struct *) malloc(sizeof(struct global_struct));
     g->viewer = NULL;
     g->magic = MAGIC_VALUE;
@@ -334,129 +345,12 @@ struct global_struct * initialize()
     return g;
 }
 
+/**
+ * A thread which gets the data from the simulation over UDP
+ */
 void *run_thread(void * arg)
 {
     struct global_struct *g = (struct global_struct *) arg;
-    
-    while(!g->viewer->done())
-    {
-        g->viewer->frame();
-    }
-
-    return NULL;
-}
-
-/**
- * Create a thread to run the visualization
- */
-void startRunThread(global_struct *g)
-{
-     // Set up the thread parameters
-    pthread_attr_t xThreadAttributes;
-    pthread_attr_init( &xThreadAttributes );
-    pthread_attr_setdetachstate( &xThreadAttributes, PTHREAD_CREATE_DETACHED );
-
-    pthread_create(&g->vis_thread, &xThreadAttributes, run_thread, g);   
-}
-
-void shutdown(struct global_struct *g)
-{
-  // TODO: Clean up weak pointers properly
-    /*
-  //! The composite viewer for the scene
-    //g->viewer->release();
-
-    free(g->uavPos);
-    free(g->uavAttitudeAndScale);
-    free(g->uav);
-    free(g->mapNode);
-    free(g->tracker);
-    free(g->manip);
-
-    // Release the viewer
-    delete(g->viewer);
-    g->viewer = NULL;
-    */
-    free(g);
-}
-
-
-/**
- * Set up the scene with the UAV and the map
- */
-void create_scene(struct global_struct *g)
-{
-    osg::DisplaySettings::instance()->setMinimumNumStencilBits( 8 );
-    
-    fprintf(stdout, "Starting create_scene\n");
-    // Create a root node
-    osg::ref_ptr<osg::Group> root = new osg::Group;
-    
-    if (g->viewer == NULL)
-        g->viewer = new osgViewer::CompositeViewer();
-    singleWindow(g->viewer, root);
-    //g->viewer->setThreadingModel(osgViewer::Viewer::SingleThreaded);
-    
-    g->viewer->getView(0)->addEventHandler(new osgViewer::StatsHandler);
-    g->viewer->getView(0)->addEventHandler(new osgViewer::ThreadingHandler);
-    
-    fprintf(stdout, "Getting earth\n");
-    //osg::Node* earth = osgDB::readNodeFile("/Users/Cotton/Programming/osg/osgearth/tests/gdal_tiff.earth");
-    fprintf(stdout, "Got earth\n");
-    //g->mapNode = osgEarth::MapNode::findMapNode( earth );
-    g->mapNode = new osgEarth::MapNode();
-    
-    fprintf(stdout, "Getting airplane\n");
-    osg::Node* airplane = createAirplane(g);
-    fprintf(stdout, "Got airplane\n");
-    g->uavPos = new osgEarth::Util::ObjectLocatorNode(g->mapNode->getMap());
-    g->uavPos->getLocator()->setPosition( osg::Vec3d(-71.100549, 42.349273, 200) );
-    g->uavPos->addChild(airplane);
-    
-    //root->addChild(earth);
-    root->addChild(g->uavPos);
-    
-    osgUtil::Optimizer optimizer;
-    optimizer.optimize(root);
-    
-    g->viewer->realize();
-    
-    osg::Matrix projectionOffset;
-    osg::Matrix viewOffset;
-    
-    g->manip = new EarthManipulator();
-    g->viewer->getView(0)->setCameraManipulator(g->manip);
-    g->manip->setViewpoint( Viewpoint(-71.100549, 42.349273, 200, 180, -25, 350.0), 10.0 );
-    g->manip->setTetherNode(g->uavPos);
-    
-    g->tracker = new osgGA::NodeTrackerManipulator();
-    g->tracker->setTrackerMode( osgGA::NodeTrackerManipulator::NODE_CENTER_AND_ROTATION );
-    g->tracker->setNode(g->uav);
-    g->tracker->setTrackNode(g->uav);
-    g->tracker->setMinimumDistance(100);
-    g->tracker->setDistance(500);
-    g->tracker->setElevation(300);
-    g->tracker->setHomePosition( osg::Vec3f(0.f,40.f,40.f), osg::Vec3f(0.f,0.f,0.f), osg::Vec3f(0,0,1) );
-    g->viewer->getView(1)->setCameraManipulator(g->tracker);
-    
-    fprintf(stdout, "Ended create_scene\n");
-}
-
-struct uav_data {
-    double q[4];
-    double NED[3];
-    double roll;
-    double pitch;
-};
-
-/**
- * The matlab entry function
- */
-int main()
-{
-    // Start visualization in a new thread
-    struct global_struct *g = initialize();
-    startRunThread(g);
 
     int s;
     struct sockaddr_in server;
@@ -485,6 +379,46 @@ int main()
     
     close(s);
 
+    return NULL;
+}
+
+/**
+ * Create a thread to run the visualization
+ */
+void startRunThread(global_struct *g)
+{
+     // Set up the thread parameters
+    pthread_attr_t xThreadAttributes;
+    pthread_attr_init( &xThreadAttributes );
+    pthread_attr_setdetachstate( &xThreadAttributes, PTHREAD_CREATE_DETACHED );
+
+    pthread_create(&g->vis_thread, &xThreadAttributes, run_thread, g);   
+}
+
+/**
+ * Free the memory from OSG
+ */
+void shutdown(struct global_struct *g)
+{
+    // TODO: Clean up weak pointers properly   
+    free(g);
+}
+
+/**
+ * The matlab entry function
+ */
+int main()
+{
+    // Start visualization in a new thread
+    struct global_struct *g = initialize();
+
+    //! Start a thread to get the network information
+    startRunThread(g);
+
+    //! Run the visualization
+    g->viewer->run();
+
+    //! Free the memory from the visualizatin
     shutdown(g);
 
     return 0;
