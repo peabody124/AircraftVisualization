@@ -27,6 +27,8 @@
 #include <osg/Point>
 #include <osg/Geometry>
 #include <osg/Texture2D>
+#include <osg/Depth>
+#include <osg/StateSet>
 #include <osg/TexEnv>
 #include <osg/GLExtensions>
 #include <osg/Material>
@@ -103,8 +105,15 @@ struct global_struct {
     //! The composite viewer for the scene
     osg::ref_ptr<osgViewer::CompositeViewer> viewer;
 
-    //! The position that locates the UAV
+    //! Whether we are rendering in earth or closed scene
+    bool earth;
+
+    //! The position that locates the UAV when rendering in earth
     osg::ref_ptr<osgEarth::Util::ObjectLocatorNode> uavPos;
+
+    //! The position that locates the UAV when rendering in simple scenes
+    osg::ref_ptr<osg::PositionAttitudeTransform> pat;
+
     //! The attitude of the UAV
     osg::ref_ptr<osg::MatrixTransform> uavAttitudeAndScale;
     //! The UAV node
@@ -233,29 +242,102 @@ osg::Node* createAirplane(struct global_struct *g)
 }
 
 /**
+ * Create a simple scene to fly around
+ */
+osg::Node *makeBase( void )
+{
+    int i, c;
+    float theta;
+    float ir = 20.0f;
+
+    osg::Vec3Array *coords = new osg::Vec3Array(19);
+    osg::Vec2Array *tcoords = new osg::Vec2Array(19);
+    osg::Vec4Array *colors = new osg::Vec4Array(1);
+
+    (*colors)[0].set(1.0f,1.0f,1.0f,1.0f);
+
+    c = 0;
+    (*coords)[c].set(0.0f,0.0f,0.0f);
+    (*tcoords)[c].set(0.0f,0.0f);
+    
+    for( i = 0; i <= 18; i++ )
+    {
+        theta = osg::DegreesToRadians((float)i * 20.0);
+
+        (*coords)[c].set(ir * cosf( theta ), ir * sinf( theta ), 0.0f);
+        (*tcoords)[c].set((*coords)[c][0]/36.0f,(*coords)[c][1]/36.0f);
+
+        c++;
+    }
+
+    osg::Geometry *geom = new osg::Geometry;
+
+    geom->setVertexArray( coords );
+
+    geom->setTexCoordArray( 0, tcoords );
+
+    geom->setColorArray( colors );
+    geom->setColorBinding( osg::Geometry::BIND_OVERALL );
+
+    geom->addPrimitiveSet( new osg::DrawArrays(osg::PrimitiveSet::TRIANGLE_FAN,0,19) );
+
+    osg::Texture2D *tex = new osg::Texture2D;
+
+    tex->setImage(osgDB::readImageFile("Images/water.rgb"));
+    tex->setWrap( osg::Texture2D::WRAP_S, osg::Texture2D::REPEAT );
+    tex->setWrap( osg::Texture2D::WRAP_T, osg::Texture2D::REPEAT );
+
+    osg::StateSet *dstate = new osg::StateSet;
+    dstate->setMode( GL_LIGHTING, osg::StateAttribute::OFF );
+    dstate->setTextureAttributeAndModes(0, tex, osg::StateAttribute::ON );
+
+    dstate->setTextureAttribute(0, new osg::TexEnv );
+
+    // clear the depth to the far plane.
+    osg::Depth* depth = new osg::Depth;
+    depth->setFunction(osg::Depth::ALWAYS);
+    depth->setRange(1.0,1.0);   
+    dstate->setAttributeAndModes(depth,osg::StateAttribute::ON );
+
+    dstate->setRenderBinDetails(-1,"RenderBin");
+
+
+    geom->setStateSet( dstate );
+
+    osg::Geode *geode = new osg::Geode;
+    geode->addDrawable( geom );
+
+    return geode;
+}
+
+/**
  * Update the position of the UAV
  */
 void updatePosition(struct global_struct *g, double *NED, double *quat)
 {
     double angle = 0;
 
-    const double HOME[] = {42.349273, -71.100549, 0};
-    double T[3];
-    double LLA[3];
-    double lat, alt;
+    if (g->earth) {
+        // If flying in virtual earth then convert from NED to LLA
+        const double HOME[] = {42.349273, -71.100549, 0};
+        double T[3];
+        double LLA[3];
+        double lat, alt;
 
-    lat = HOME[0] * M_PI / 180.0;
-    alt = HOME[2];
+        lat = HOME[0] * M_PI / 180.0;
+        alt = HOME[2];
 
-    T[0] = alt+6.378137E6f;
-    T[1] = cos(lat)*(alt+6.378137E6);
-    T[2] = -1.0;
+        T[0] = alt+6.378137E6f;
+        T[1] = cos(lat)*(alt+6.378137E6);
+        T[2] = -1.0;
 
-    LLA[0] = HOME[0] + NED[0] / T[0] * 180.0 / M_PI;
-    LLA[1] = HOME[1] + NED[1] / T[1] * 180.0 / M_PI;
-    LLA[2] = HOME[2] + NED[2] / T[2];
-
-    g->uavPos->getLocator()->setPosition( osg::Vec3d(LLA[1], LLA[0], LLA[2]) );  // Note this takes longtitude first
+        LLA[0] = HOME[0] + NED[0] / T[0] * 180.0 / M_PI;
+        LLA[1] = HOME[1] + NED[1] / T[1] * 180.0 / M_PI;
+        LLA[2] = HOME[2] + NED[2] / T[2];
+        g->uavPos->getLocator()->setPosition( osg::Vec3d(LLA[1], LLA[0], LLA[2]) );  // Note this takes longtitude first
+    } else {
+        g->pat->setPosition(osg::Vec3d(NED[0], NED[1], NED[2]));
+    }
 
     // Set the attitude (reverse the attitude)
     // Have to rotate the axes from OP NED frame to OSG frame (X east, Y north, Z down)
@@ -294,23 +376,41 @@ struct global_struct * initialize()
     g->viewer = NULL;
     g->magic = MAGIC_VALUE;
 
+    g->earth = false;
+
     // Create a root node
     osg::ref_ptr<osg::Group> root = new osg::Group;
 
-    osg::Node* earth = osgDB::readNodeFile("/Users/Cotton/Programming/osg/osgearth/tests/boston.earth");
-    if (earth == NULL) {
-        diep((char*) "Dude, update your boston.earth path");
+    if (g->earth) {
+
+        osg::Node* earth = osgDB::readNodeFile("/Users/Cotton/Programming/osg/osgearth/tests/boston.earth");
+        if (earth == NULL) {
+            diep((char*) "Dude, update your boston.earth path");
+        }
+
+        g->mapNode = osgEarth::MapNode::findMapNode( earth );
+
+        osg::Node* airplane = createAirplane(g);
+        g->uavPos = new osgEarth::Util::ObjectLocatorNode(g->mapNode->getMap());
+        g->uavPos->getLocator()->setPosition( osg::Vec3d(-71.100549, 42.349273, 200) );
+        g->uavPos->addChild(airplane);
+        root->addChild(earth);
+        root->addChild(g->uavPos);
+
+        g->manip = new EarthManipulator();
+        g->viewer->getView(0)->setCameraManipulator(g->manip);
+        g->manip->setViewpoint( Viewpoint(-71.100549, 42.349273, 200, 180, -25, 350.0), 10.0 );
+        g->manip->setTetherNode(g->uavPos);
+
+    } else {
+        osg::Node *world = makeBase();
+        osg::Node* airplane = createAirplane(g);
+        g->pat = new osg::PositionAttitudeTransform();
+        g->pat->addChild(airplane);
+
+        root->addChild(world);
+        root->addChild(g->pat);
     }
-
-    g->mapNode = osgEarth::MapNode::findMapNode( earth );
-
-    osg::Node* airplane = createAirplane(g);
-    g->uavPos = new osgEarth::Util::ObjectLocatorNode(g->mapNode->getMap());
-    g->uavPos->getLocator()->setPosition( osg::Vec3d(-71.100549, 42.349273, 200) );
-    g->uavPos->addChild(airplane);
-
-    root->addChild(earth);
-    root->addChild(g->uavPos);
 
     osgUtil::Optimizer optimizer;
     optimizer.optimize(root);
@@ -322,16 +422,6 @@ struct global_struct * initialize()
     g->viewer->getView(0)->addEventHandler(new osgViewer::StatsHandler);
     g->viewer->getView(0)->addEventHandler(new osgViewer::ThreadingHandler);
     
-    g->viewer->realize();
-
-    osg::Matrix projectionOffset;
-    osg::Matrix viewOffset;
-
-    g->manip = new EarthManipulator();
-    g->viewer->getView(0)->setCameraManipulator(g->manip);
-    g->manip->setViewpoint( Viewpoint(-71.100549, 42.349273, 200, 180, -25, 350.0), 10.0 );
-    g->manip->setTetherNode(g->uavPos);
-
     g->tracker = new osgGA::NodeTrackerManipulator();
     g->tracker->setTrackerMode( osgGA::NodeTrackerManipulator::NODE_CENTER_AND_ROTATION );
     g->tracker->setNode(g->uav);
