@@ -104,6 +104,8 @@ double homeAlt=0;
 double initialAlt=200;
 string earthFile="osgearth_models/boston.earth";
 string modelFile="airframe_models/joe_cnc/J14-QT_X.3DS";
+bool useOSGEarth = false;
+
 //! Magic value to check the static data
 enum magic_value { MAGIC_VALUE = 0xAF01BC32 };
 
@@ -387,7 +389,7 @@ struct global_struct * initialize()
     g->magic = MAGIC_VALUE;
 
 
-    g->earth = false;
+    g->earth = useOSGEarth;
 
     // Create a root node
     osg::ref_ptr<osg::Group> root = new osg::Group;
@@ -539,6 +541,7 @@ int main(int argc, char * const argv[])
 				}				
 				else if(strncmp("-earth", argv[i]+1, 6)==0){
 					earthFile=argv[i+1];
+					useOSGEarth=true;
 					i++;
 				}
 				else if(strncmp("-home", argv[i]+1, 5)==0){
