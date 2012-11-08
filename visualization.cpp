@@ -350,7 +350,7 @@ void updatePosition(struct global_struct *g, double *NED, double *quat)
     }
 
     // Set the attitude (reverse the attitude)
-    // Have to rotate the axes from OP NED frame to OSG frame (X east, Y north, Z down)
+    // Have to rotate the axes from OP NED frame to OSG frame (X east, Y north, Z up)
     osg::Quat q(quat[1],quat[2],quat[3],quat[0]);
     osg::Vec3d axis;
     q.getRotate(angle,axis);
