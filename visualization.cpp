@@ -104,6 +104,7 @@ double homeAlt=0;
 double initialAlt=200;
 double initialNED[3]={0,0,0};
 string earthFile="osgearth_models/boston.earth";
+string worldFile="osg_models/death star.osg";
 string modelFile="airframe_models/joe_cnc/J14-QT_X.3DS";
 bool useOSGEarth = false;
 
@@ -420,16 +421,13 @@ struct global_struct * initialize()
         g->manip->setTetherNode(g->uavPos);
 
     } else {
-        osg::Node *world = makeBase();
+        osg::Node* world = osgDB::readNodeFile(worldFile);
         osg::Node* airplane = createAirplane(g);
         g->pat = new osg::PositionAttitudeTransform();
         g->pat->setScale(osg::Vec3d(0.02,0.02,0.02));
         g->pat->addChild(airplane);
 
-        root->addChild(makeSky());
-        root->addChild(makeBase());
-        root->addChild(makeTerrain());
-        root->addChild(makeTrees());
+        root->addChild(world);
         root->addChild(g->pat);
         g->viewer->getView(0)->setCameraManipulator(new osgGA::TrackballManipulator());
 
@@ -546,6 +544,11 @@ int main(int argc, char * const argv[])
 				else if(strncmp("-earth", argv[i]+1, 6)==0){
 					earthFile=argv[i+1];
 					useOSGEarth=true;
+					i++;
+				}
+				else if(strncmp("-world", argv[i]+1, 6)==0){
+					worldFile=argv[i+1];
+					useOSGEarth=false;
 					i++;
 				}
 				else if(strncmp("-home", argv[i]+1, 5)==0){
