@@ -199,7 +199,7 @@ osg::Node* createAirplane(struct global_struct *g)
 {
     osg::ref_ptr<osg::Group> model = new osg::Group;
 
-    g->uav = osgDB::readNodeFile("/Users/Cotton/Programming/OpenPilot/artwork/3D Model/multi/joes_cnc/J14-QT_+.3DS");
+    g->uav = osgDB::readNodeFile("/Users/laurici/Documents/PhoenixPilot/artwork/3D Model//planes/Easystar/easystar.3ds");
     if (g->uav == NULL) {
         diep( (char*) "Dude, update your model file");
     }
@@ -286,7 +286,7 @@ struct global_struct * initialize()
     // Create a root node
     osg::ref_ptr<osg::Group> root = new osg::Group;
 
-    osg::Node* earth = osgDB::readNodeFile("/Users/Cotton/Programming/osg/osgearth/tests/boston.earth");
+    osg::Node* earth = osgDB::readNodeFile("/Users/laurici/Documents/AircraftVisualization/boston.earth");
     if (earth == NULL) {
         diep((char*) "Dude, update your boston.earth path");
     }
