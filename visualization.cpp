@@ -103,7 +103,7 @@ double homeLon=-71.100549;
 double homeAlt=0;
 double initialAlt=200;
 string earthFile="boston.earth";
-string modelFile="easystar.3ds";
+string modelFile="joe_cnc/J14-QT_X.3DS";
 //! Magic value to check the static data
 enum magic_value { MAGIC_VALUE = 0xAF01BC32 };
 
@@ -342,7 +342,7 @@ void updatePosition(struct global_struct *g, double *NED, double *quat)
         LLA[2] = HOME[2] + NED[2] / T[2];
         g->uavPos->getLocator()->setPosition( osg::Vec3d(LLA[1], LLA[0], LLA[2]) );  // Note this takes longtitude first
     } else {
-        g->pat->setPosition(osg::Vec3d(NED[1] / 100.0, NED[0] / 100.0, -NED[2] / 100.0 + 2));
+        g->pat->setPosition(osg::Vec3d(NED[1] / 20.0, NED[0] / 20.0, -NED[2] / 20.0 + 2));
     }
 
     // Set the attitude (reverse the attitude)
@@ -420,7 +420,7 @@ struct global_struct * initialize()
         osg::Node *world = makeBase();
         osg::Node* airplane = createAirplane(g);
         g->pat = new osg::PositionAttitudeTransform();
-        g->pat->setScale(osg::Vec3d(0.1,0.1,0.1));
+        g->pat->setScale(osg::Vec3d(0.02,0.02,0.02));
         g->pat->addChild(airplane);
 
         root->addChild(makeSky());
