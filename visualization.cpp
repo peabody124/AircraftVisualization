@@ -102,8 +102,8 @@ double homeLat=42.349273;
 double homeLon=-71.100549;
 double homeAlt=0;
 double initialAlt=200;
-string earthFile="boston.earth";
-string modelFile="joe_cnc/J14-QT_X.3DS";
+string earthFile="osgearth_models/boston.earth";
+string modelFile="airframe_models/joe_cnc/J14-QT_X.3DS";
 //! Magic value to check the static data
 enum magic_value { MAGIC_VALUE = 0xAF01BC32 };
 
