@@ -116,6 +116,12 @@ struct global_struct {
     enum magic_value magic;
 };
 
+void diep(char *s)
+{
+    perror(s);
+    exit(1);
+}
+
 /**
  * Set up the display window so it can be resized.  Default to full scale
  */
@@ -194,6 +200,9 @@ osg::Node* createAirplane(struct global_struct *g)
     osg::ref_ptr<osg::Group> model = new osg::Group;
 
     g->uav = osgDB::readNodeFile("/Users/Cotton/Programming/OpenPilot/artwork/3D Model/multi/joes_cnc/J14-QT_+.3DS");
+    if (g->uav == NULL) {
+        diep( (char*) "Dude, update your model file");
+    }
 
     if(g->uav) {
         g->uavAttitudeAndScale = new osg::MatrixTransform();
@@ -215,9 +224,26 @@ osg::Node* createAirplane(struct global_struct *g)
 /**
  * Update the position of the UAV
  */
-void updatePosition(struct global_struct *g, double *LLA, double *quat)
+void updatePosition(struct global_struct *g, double *NED, double *quat)
 {
     double angle = 0;
+
+    const double HOME[] = {42.349273, -71.100549, 0};
+    double T[3];
+    double LLA[3];
+    double lat, alt;
+
+    lat = HOME[0] * M_PI / 180.0;
+    alt = HOME[2];
+
+    T[0] = alt+6.378137E6f;
+    T[1] = cos(lat)*(alt+6.378137E6);
+    T[2] = -1.0;
+
+    LLA[0] = HOME[0] + NED[0] / T[0] * 180.0 / M_PI;
+    LLA[1] = HOME[1] + NED[1] / T[1] * 180.0 / M_PI;
+    LLA[2] = HOME[2] + NED[2] / T[2];
+
     g->uavPos->getLocator()->setPosition( osg::Vec3d(LLA[1], LLA[0], LLA[2]) );  // Note this takes longtitude first
 
     // Set the attitude (reverse the attitude)
@@ -261,6 +287,10 @@ struct global_struct * initialize()
     osg::ref_ptr<osg::Group> root = new osg::Group;
 
     osg::Node* earth = osgDB::readNodeFile("/Users/Cotton/Programming/osg/osgearth/tests/boston.earth");
+    if (earth == NULL) {
+        diep((char*) "Dude, update your boston.earth path");
+    }
+
     g->mapNode = osgEarth::MapNode::findMapNode( earth );
 
     osg::Node* airplane = createAirplane(g);
@@ -412,15 +442,11 @@ void create_scene(struct global_struct *g)
     fprintf(stdout, "Ended create_scene\n");
 }
 
-
-void diep(char *s)
-{
-    perror(s);
-    exit(1);
-}
-
 struct uav_data {
     double q[4];
+    double NED[3];
+    double roll;
+    double pitch;
 };
 
 /**
@@ -428,8 +454,9 @@ struct uav_data {
  */
 int main()
 {
-
+    // Start visualization in a new thread
     struct global_struct *g = initialize();
+    startRunThread(g);
 
     int s;
     struct sockaddr_in server;
@@ -445,31 +472,15 @@ int main()
     server.sin_port = htons(3000);
     bind(s, (struct sockaddr *)&server,sizeof(server));
     
-    fprintf(stdout, "Bound socket");
 
-    startRunThread(g);
+    struct uav_data uav_data;
 
-    //vislib_start(NULL);
-    struct uav_data data;
-    double LLA[] = {42.349273, -71.100549, 500};
-    double q[] = {0,1,0,0};
-
-    double pitch = 0;
     while(!g->viewer->done())
     {
-        pitch+=0.1;
-        if (pitch > 45)
-            pitch = -45;
+        recvfrom(s,&uav_data,sizeof(uav_data),0,&client,&client_len);
 
-        recvfrom(s,&data,sizeof(data),0,&client,&client_len);
-
-        updateCamera(g, pitch, 20);
-
-        LLA[1] += 0.00001;
-        updatePosition(g, LLA, data.q);
-        //g->viewer->frame();
-
-        //fprintf(stdout, "(%g,%g,%g,%g)\n", data.q[0], data.q[1], data.q[2], data.q[3]);
+        updateCamera(g, uav_data.pitch, uav_data.roll);
+        updatePosition(g, uav_data.NED, uav_data.q);
     }
     
     close(s);
