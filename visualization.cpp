@@ -88,6 +88,7 @@ using namespace osgEarth::Util::Controls;
 using namespace osgEarth::Symbology;
 using namespace osgEarth::Drivers;
 using namespace osgEarth::Annotation;
+using namespace std;
 
 //! Structure transferred over the network
 struct uav_data {
@@ -97,6 +98,12 @@ struct uav_data {
     double pitch;
 };
 
+double homeLat=42.349273;
+double homeLon=-71.100549;
+double homeAlt=0;
+double initialAlt=200;
+string earthFile="boston.earth";
+string modelFile="easystar.3ds";
 //! Magic value to check the static data
 enum magic_value { MAGIC_VALUE = 0xAF01BC32 };
 
@@ -219,7 +226,7 @@ osg::Node* createAirplane(struct global_struct *g)
 {
     osg::ref_ptr<osg::Group> model = new osg::Group;
 
-    g->uav = osgDB::readNodeFile("/Users/Cotton/Programming/OpenPilot/artwork/3D Model/multi/joes_cnc/J14-QT_+.3DS");
+    g->uav = osgDB::readNodeFile(modelFile);
     if (g->uav == NULL) {
         diep( (char*) "Dude, update your model file");
     }
@@ -301,7 +308,6 @@ osg::Node *makeBase( void )
 
     dstate->setRenderBinDetails(-1,"RenderBin");
 
-
     geom->setStateSet( dstate );
 
     osg::Geode *geode = new osg::Geode;
@@ -319,7 +325,7 @@ void updatePosition(struct global_struct *g, double *NED, double *quat)
 
     if (g->earth) {
         // If flying in virtual earth then convert from NED to LLA
-        const double HOME[] = {42.349273, -71.100549, 0};
+        const double HOME[] = {homeLat, homeLon, homeAlt};
         double T[3];
         double LLA[3];
         double lat, alt;
@@ -391,7 +397,7 @@ struct global_struct * initialize()
 
     if (g->earth) {
 
-        osg::Node* earth = osgDB::readNodeFile("/Users/Cotton/Programming/osg/osgearth/tests/boston.earth");
+        osg::Node* earth = osgDB::readNodeFile(earthFile);
         if (earth == NULL) {
             diep((char*) "Dude, update your boston.earth path");
         }
@@ -425,6 +431,7 @@ struct global_struct * initialize()
         g->viewer->getView(0)->setCameraManipulator(new osgGA::TrackballManipulator());
     }
 
+
     osgUtil::Optimizer optimizer;
     optimizer.optimize(root);
 
@@ -437,7 +444,7 @@ struct global_struct * initialize()
     g->tracker->setTrackNode(g->uav);
     g->tracker->setMinimumDistance(100); 
     g->tracker->setDistance(500); 
-    g->tracker->setElevation(300); 
+    g->tracker->setElevation(initialAlt+100); 
     g->tracker->setHomePosition( osg::Vec3f(0.f,40.f,40.f), osg::Vec3f(0.f,0.f,0.f), osg::Vec3f(0,0,1) ); 
     g->viewer->getView(1)->setCameraManipulator(g->tracker);
 
@@ -503,11 +510,53 @@ void shutdown(struct global_struct *g)
     free(g);
 }
 
+void help()
+{
+	cout << "This command line tool lets you visualize the uav "
+	<< "flight using OpenSceneGraph." << endl
+	<< "Usage:" "visualize [--earth] [--home] [--alt] [--fps] [--scale] [--start_frame] [--rot]" << endl
+	<< " " << "--earth:    OSG Earth file"<< endl
+	<< " " << "--home:     Latitude longitude altitude."<< endl
+	<< " " << "--alt:      Initial vehicle altitude"<< endl;
+}
+
 /**
  * The matlab entry function
  */
-int main()
+int main(int argc, char * const argv[])
 {
+	
+	if(argc==1){
+		//Simple demo, load map of Boston
+	}
+	else{
+		for (int i=1; i<argc; i++){
+			if (strncmp("-", argv[i], 1)==0 ){
+				if(strncmp("h", argv[1]+1, 1)==0 || strncmp("-help", argv[1]+1, 5)==0){
+					//Help
+					help();
+					exit (1);
+				}				
+				else if(strncmp("-earth", argv[i]+1, 6)==0){
+					earthFile=argv[i+1];
+					i++;
+				}
+				else if(strncmp("-home", argv[i]+1, 5)==0){
+					homeLat=atof(argv[i+1]);
+					homeLon=atof(argv[i+2]);
+					homeAlt=atof(argv[i+3]);
+					i+=3;
+				}
+				else if(strncmp("-alt", argv[i]+1, 4)==0){
+					initialAlt=atof(argv[i+1]);
+					i++;
+				}
+				i++;
+			}
+		}
+	}
+
+	
     // Start visualization in a new thread
     struct global_struct *g = initialize();
 
