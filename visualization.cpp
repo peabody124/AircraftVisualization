@@ -102,6 +102,7 @@ double homeLat=42.349273;
 double homeLon=-71.100549;
 double homeAlt=0;
 double initialAlt=200;
+double initialNED[3]={0,0,0};
 string earthFile="osgearth_models/boston.earth";
 string modelFile="airframe_models/joe_cnc/J14-QT_X.3DS";
 bool useOSGEarth = false;
@@ -431,6 +432,9 @@ struct global_struct * initialize()
         root->addChild(makeTrees());
         root->addChild(g->pat);
         g->viewer->getView(0)->setCameraManipulator(new osgGA::TrackballManipulator());
+
+        //Convert NED into ENU
+        g->pat->setPosition(osg::Vec3d(initialNED[1], initialNED[0], -initialNED[2]));
     }
 
 
@@ -549,6 +553,11 @@ int main(int argc, char * const argv[])
 					homeLon=atof(argv[i+2]);
 					homeAlt=atof(argv[i+3]);
 					i+=3;
+				}
+				else if(strncmp("-NED", argv[i]+1, 4)==0){
+					initialNED[0]=atof(argv[i+1]);
+					initialNED[1]=atof(argv[i+2]);
+					initialNED[2]=atof(argv[i+3]);
 				}
 				else if(strncmp("-alt", argv[i]+1, 4)==0){
 					initialAlt=atof(argv[i+1]);
