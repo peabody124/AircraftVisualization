@@ -1,4 +1,26 @@
-#include <pthread.h>
+/**
+ ******************************************************************************
+ * @author     James Cotton, Copyright (C) 2012.
+ *
+ * @see        The GNU Public License (GPL) Version 3
+ ******************************************************************************/
+/*
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+ * or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License
+ * for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
+ */
+
+
 #include <osg/PointSprite>
 #include <osg/BlendFunc>
 #include <osg/StateAttribute>
@@ -27,8 +49,6 @@
 #include <osgGA/StateSetManipulator>
 #include <osgGA/AnimationPathManipulator>
 
-#include <iostream>
-
 #include <osgEarth/MapNode>
 #include <osgEarth/XmlUtils>
 #include <osgEarth/Viewpoint>
@@ -50,6 +70,16 @@
 #include <osgEarthUtil/LatLongFormatter>
 #include <osgEarthUtil/MouseCoordsTool>
 #include <osgEarthUtil/ObjectLocator>
+
+#include <iostream>
+#include <pthread.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <netinet/in.h>
 
 using namespace osgEarth::Util;
 using namespace osgEarth::Util::Controls;
@@ -187,19 +217,15 @@ osg::Node* createAirplane(struct global_struct *g)
  */
 void updatePosition(struct global_struct *g, double *LLA, double *quat)
 {
-    static float angle = 0;
+    double angle = 0;
     g->uavPos->getLocator()->setPosition( osg::Vec3d(LLA[1], LLA[0], LLA[2]) );  // Note this takes longtitude first
 
     // Set the attitude (reverse the attitude)
     // Have to rotate the axes from OP NED frame to OSG frame (X east, Y north, Z down)
     osg::Quat q(quat[1],quat[2],quat[3],quat[0]);
     osg::Vec3d axis;
-    //q.getRotate(angle,axis);
+    q.getRotate(angle,axis);
     q.makeRotate(angle, osg::Vec3d(axis[1],axis[0],-axis[2]));
-
-    angle+=0.01;
-    if (angle > 360) angle = 0;
-    q.makeRotate(angle, osg::Vec3d(0,0,1));
     osg::Matrixd rot = osg::Matrixd::rotate(q);
 
     g->uavAttitudeAndScale->setMatrix(rot);
@@ -282,22 +308,11 @@ void *run_thread(void * arg)
 {
     struct global_struct *g = (struct global_struct *) arg;
     
-    double LLA[] = {42.349273, -71.100549, 500};
-    double quat[] = {1,0,0,0};
-    double pitch = -45;
-
     while(!g->viewer->done())
     {
-        pitch+=0.1;
-        if (pitch > 45)
-            pitch = -45;
-
-        updatePosition(g, LLA, quat);
-        updateCamera(g, pitch, 20);
-        LLA[1] += 0.00001;
-
         g->viewer->frame();
     }
+
     return NULL;
 }
 
@@ -335,6 +350,79 @@ void shutdown(struct global_struct *g)
     free(g);
 }
 
+
+/**
+ * Set up the scene with the UAV and the map
+ */
+void create_scene(struct global_struct *g)
+{
+    osg::DisplaySettings::instance()->setMinimumNumStencilBits( 8 );
+    
+    fprintf(stdout, "Starting create_scene\n");
+    // Create a root node
+    osg::ref_ptr<osg::Group> root = new osg::Group;
+    
+    if (g->viewer == NULL)
+        g->viewer = new osgViewer::CompositeViewer();
+    singleWindow(g->viewer, root);
+    //g->viewer->setThreadingModel(osgViewer::Viewer::SingleThreaded);
+    
+    g->viewer->getView(0)->addEventHandler(new osgViewer::StatsHandler);
+    g->viewer->getView(0)->addEventHandler(new osgViewer::ThreadingHandler);
+    
+    fprintf(stdout, "Getting earth\n");
+    //osg::Node* earth = osgDB::readNodeFile("/Users/Cotton/Programming/osg/osgearth/tests/gdal_tiff.earth");
+    fprintf(stdout, "Got earth\n");
+    //g->mapNode = osgEarth::MapNode::findMapNode( earth );
+    g->mapNode = new osgEarth::MapNode();
+    
+    fprintf(stdout, "Getting airplane\n");
+    osg::Node* airplane = createAirplane(g);
+    fprintf(stdout, "Got airplane\n");
+    g->uavPos = new osgEarth::Util::ObjectLocatorNode(g->mapNode->getMap());
+    g->uavPos->getLocator()->setPosition( osg::Vec3d(-71.100549, 42.349273, 200) );
+    g->uavPos->addChild(airplane);
+    
+    //root->addChild(earth);
+    root->addChild(g->uavPos);
+    
+    osgUtil::Optimizer optimizer;
+    optimizer.optimize(root);
+    
+    g->viewer->realize();
+    
+    osg::Matrix projectionOffset;
+    osg::Matrix viewOffset;
+    
+    g->manip = new EarthManipulator();
+    g->viewer->getView(0)->setCameraManipulator(g->manip);
+    g->manip->setViewpoint( Viewpoint(-71.100549, 42.349273, 200, 180, -25, 350.0), 10.0 );
+    g->manip->setTetherNode(g->uavPos);
+    
+    g->tracker = new osgGA::NodeTrackerManipulator();
+    g->tracker->setTrackerMode( osgGA::NodeTrackerManipulator::NODE_CENTER_AND_ROTATION );
+    g->tracker->setNode(g->uav);
+    g->tracker->setTrackNode(g->uav);
+    g->tracker->setMinimumDistance(100);
+    g->tracker->setDistance(500);
+    g->tracker->setElevation(300);
+    g->tracker->setHomePosition( osg::Vec3f(0.f,40.f,40.f), osg::Vec3f(0.f,0.f,0.f), osg::Vec3f(0,0,1) );
+    g->viewer->getView(1)->setCameraManipulator(g->tracker);
+    
+    fprintf(stdout, "Ended create_scene\n");
+}
+
+
+void diep(char *s)
+{
+    perror(s);
+    exit(1);
+}
+
+struct uav_data {
+    double q[4];
+};
+
 /**
  * The matlab entry function
  */
@@ -343,10 +431,48 @@ int main()
 
     struct global_struct *g = initialize();
 
+    int s;
+    struct sockaddr_in server;
+    struct sockaddr client;
+    socklen_t client_len = sizeof(client);
+
+    s = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP);
+
+    memset(&client,0,sizeof(client));
+    memset(&server,0,sizeof(server));
+    server.sin_family = AF_INET;
+    server.sin_addr.s_addr = inet_addr("127.0.0.1");
+    server.sin_port = htons(3000);
+    bind(s, (struct sockaddr *)&server,sizeof(server));
+    
+    fprintf(stdout, "Bound socket");
+
     startRunThread(g);
 
-    while(1);
-    pthread_join(g->vis_thread, NULL);
+    //vislib_start(NULL);
+    struct uav_data data;
+    double LLA[] = {42.349273, -71.100549, 500};
+    double q[] = {0,1,0,0};
+
+    double pitch = 0;
+    while(!g->viewer->done())
+    {
+        pitch+=0.1;
+        if (pitch > 45)
+            pitch = -45;
+
+        recvfrom(s,&data,sizeof(data),0,&client,&client_len);
+
+        updateCamera(g, pitch, 20);
+
+        LLA[1] += 0.00001;
+        updatePosition(g, LLA, data.q);
+        //g->viewer->frame();
+
+        //fprintf(stdout, "(%g,%g,%g,%g)\n", data.q[0], data.q[1], data.q[2], data.q[3]);
+    }
+    
+    close(s);
 
     shutdown(g);
 
