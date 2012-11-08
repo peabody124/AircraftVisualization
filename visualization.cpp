@@ -102,8 +102,12 @@ double homeLat=42.349273;
 double homeLon=-71.100549;
 double homeAlt=0;
 double initialAlt=200;
+double initialNED[3]={0,0,0};
 string earthFile="osgearth_models/boston.earth";
+string worldFile="osg_models/death star.osg";
 string modelFile="airframe_models/joe_cnc/J14-QT_X.3DS";
+bool useOSGEarth = false;
+
 //! Magic value to check the static data
 enum magic_value { MAGIC_VALUE = 0xAF01BC32 };
 
@@ -346,7 +350,7 @@ void updatePosition(struct global_struct *g, double *NED, double *quat)
     }
 
     // Set the attitude (reverse the attitude)
-    // Have to rotate the axes from OP NED frame to OSG frame (X east, Y north, Z down)
+    // Have to rotate the axes from OP NED frame to OSG frame (X east, Y north, Z up)
     osg::Quat q(quat[1],quat[2],quat[3],quat[0]);
     osg::Vec3d axis;
     q.getRotate(angle,axis);
@@ -387,7 +391,7 @@ struct global_struct * initialize()
     g->magic = MAGIC_VALUE;
 
 
-    g->earth = false;
+    g->earth = useOSGEarth;
 
     // Create a root node
     osg::ref_ptr<osg::Group> root = new osg::Group;
@@ -417,18 +421,18 @@ struct global_struct * initialize()
         g->manip->setTetherNode(g->uavPos);
 
     } else {
-        osg::Node *world = makeBase();
+        osg::Node* world = osgDB::readNodeFile(worldFile);
         osg::Node* airplane = createAirplane(g);
         g->pat = new osg::PositionAttitudeTransform();
         g->pat->setScale(osg::Vec3d(0.02,0.02,0.02));
         g->pat->addChild(airplane);
 
-        root->addChild(makeSky());
-        root->addChild(makeBase());
-        root->addChild(makeTerrain());
-        root->addChild(makeTrees());
+        root->addChild(world);
         root->addChild(g->pat);
         g->viewer->getView(0)->setCameraManipulator(new osgGA::TrackballManipulator());
+
+        //Convert NED into ENU
+        g->pat->setPosition(osg::Vec3d(initialNED[1], initialNED[0], -initialNED[2]));
     }
 
 
@@ -539,6 +543,12 @@ int main(int argc, char * const argv[])
 				}				
 				else if(strncmp("-earth", argv[i]+1, 6)==0){
 					earthFile=argv[i+1];
+					useOSGEarth=true;
+					i++;
+				}
+				else if(strncmp("-world", argv[i]+1, 6)==0){
+					worldFile=argv[i+1];
+					useOSGEarth=false;
 					i++;
 				}
 				else if(strncmp("-home", argv[i]+1, 5)==0){
@@ -546,6 +556,11 @@ int main(int argc, char * const argv[])
 					homeLon=atof(argv[i+2]);
 					homeAlt=atof(argv[i+3]);
 					i+=3;
+				}
+				else if(strncmp("-NED", argv[i]+1, 4)==0){
+					initialNED[0]=atof(argv[i+1]);
+					initialNED[1]=atof(argv[i+2]);
+					initialNED[2]=atof(argv[i+3]);
 				}
 				else if(strncmp("-alt", argv[i]+1, 4)==0){
 					initialAlt=atof(argv[i+1]);
