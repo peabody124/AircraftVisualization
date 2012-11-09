@@ -104,7 +104,7 @@ double homeAlt=0;
 double initialAlt=200;
 double initialNED[3]={0,0,0};
 string earthFile="osgearth_models/boston.earth";
-string worldFile="osg_models/death star.osg";
+string worldFile="";
 string modelFile="airframe_models/joe_cnc/J14-QT_X.3DS";
 bool useOSGEarth = false;
 
@@ -422,12 +422,25 @@ struct global_struct * initialize()
 
     } else {
         osg::Node* world = osgDB::readNodeFile(worldFile);
+
         osg::Node* airplane = createAirplane(g);
         g->pat = new osg::PositionAttitudeTransform();
         g->pat->setScale(osg::Vec3d(0.02,0.02,0.02));
         g->pat->addChild(airplane);
 
-        root->addChild(world);
+        if (world == NULL) { //Default is to use hang glider world taken from OSG examples
+            world = makeBase();
+			 
+            root->addChild(makeSky());
+            root->addChild(makeBase());
+            root->addChild(makeTerrain());
+            root->addChild(makeTrees());
+            root->addChild(g->pat);
+            g->viewer->getView(0)->setCameraManipulator(new osgGA::TrackballManipulator());			 
+        }
+        else {
+            root->addChild(world);
+        }
         root->addChild(g->pat);
         g->viewer->getView(0)->setCameraManipulator(new osgGA::TrackballManipulator());
 
