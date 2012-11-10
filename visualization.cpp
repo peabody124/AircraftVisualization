@@ -230,6 +230,7 @@ osg::Node* createAirplane(struct global_struct *g)
 {
     osg::ref_ptr<osg::Group> model = new osg::Group;
 
+    cout << "Model: " << modelFile << endl;
     g->uav = osgDB::readNodeFile(modelFile);
     if (g->uav == NULL) {
         diep( (char*) "Dude, update your model file");
@@ -400,6 +401,8 @@ struct global_struct * initialize()
     singleWindow(g->viewer, root);
 
     if (g->earth) {
+		 
+        cout << "Earth: " << earthFile << endl;
 
         osg::Node* earth = osgDB::readNodeFile(earthFile);
         if (earth == NULL) {
@@ -427,6 +430,8 @@ struct global_struct * initialize()
         g->pat = new osg::PositionAttitudeTransform();
         g->pat->setScale(osg::Vec3d(0.02,0.02,0.02));
         g->pat->addChild(airplane);
+		 
+        osg::ref_ptr<osg::PositionAttitudeTransform> pat = new osg::PositionAttitudeTransform();
 
         if (world == NULL) { //Default is to use hang glider world taken from OSG examples
             world = makeBase();
@@ -439,7 +444,10 @@ struct global_struct * initialize()
             g->viewer->getView(0)->setCameraManipulator(new osgGA::TrackballManipulator());			 
         }
         else {
-            root->addChild(world);
+            pat->addChild(world);
+            pat->setScale(osg::Vec3d(.0025*200,.0025*200,.0025*200)); //This sets the world scale. It should be adjusted to be as close as possible to 1 meter/unit in OSG
+            pat->setPosition(osg::Vec3f(0,0,16*200));
+            root->addChild(pat);
         }
         root->addChild(g->pat);
         g->viewer->getView(0)->setCameraManipulator(new osgGA::TrackballManipulator());
@@ -549,7 +557,7 @@ int main(int argc, char * const argv[])
 	else{
 		for (int i=1; i<argc; i++){
 			if (strncmp("-", argv[i], 1)==0 ){
-				if(strncmp("h", argv[1]+1, 1)==0 || strncmp("-help", argv[1]+1, 5)==0){
+				if(strncmp("h", argv[i]+1, 1)==0 || strncmp("-help", argv[i]+1, 5)==0){
 					//Help
 					help();
 					exit (1);
@@ -562,6 +570,10 @@ int main(int argc, char * const argv[])
 				else if(strncmp("-world", argv[i]+1, 6)==0){
 					worldFile=argv[i+1];
 					useOSGEarth=false;
+					i++;
+				}
+				else if(strncmp("-model", argv[i]+1, 6)==0){
+					modelFile=argv[i+1];
 					i++;
 				}
 				else if(strncmp("-home", argv[i]+1, 5)==0){
@@ -579,12 +591,10 @@ int main(int argc, char * const argv[])
 					initialAlt=atof(argv[i+1]);
 					i++;
 				}
-				i++;
 			}
 		}
 	}
 
-	
     // Start visualization in a new thread
     struct global_struct *g = initialize();
 
