@@ -329,73 +329,6 @@ osg::Node* createAirplane(struct global_struct *g)
     return model.release();
 }
 
-/**
- * Create a simple scene to fly around
- */
-osg::Node *makeBase( void )
-{
-    int i, c;
-    float theta;
-    float ir = 20.0f;
-
-    osg::Vec3Array *coords = new osg::Vec3Array(19);
-    osg::Vec2Array *tcoords = new osg::Vec2Array(19);
-    osg::Vec4Array *colors = new osg::Vec4Array(1);
-
-    (*colors)[0].set(1.0f,1.0f,1.0f,1.0f);
-
-    c = 0;
-    (*coords)[c].set(0.0f,0.0f,0.0f);
-    (*tcoords)[c].set(0.0f,0.0f);
-    
-    for( i = 0; i <= 18; i++ )
-    {
-        theta = osg::DegreesToRadians((float)i * 20.0);
-
-        (*coords)[c].set(ir * cosf( theta ), ir * sinf( theta ), 0.0f);
-        (*tcoords)[c].set((*coords)[c][0]/36.0f,(*coords)[c][1]/36.0f);
-
-        c++;
-    }
-
-    osg::Geometry *geom = new osg::Geometry;
-
-    geom->setVertexArray( coords );
-
-    geom->setTexCoordArray( 0, tcoords );
-
-    geom->setColorArray( colors );
-    geom->setColorBinding( osg::Geometry::BIND_OVERALL );
-
-    geom->addPrimitiveSet( new osg::DrawArrays(osg::PrimitiveSet::TRIANGLE_FAN,0,19) );
-
-    osg::Texture2D *tex = new osg::Texture2D;
-
-    tex->setImage(osgDB::readImageFile("Images/water.rgb"));
-    tex->setWrap( osg::Texture2D::WRAP_S, osg::Texture2D::REPEAT );
-    tex->setWrap( osg::Texture2D::WRAP_T, osg::Texture2D::REPEAT );
-
-    osg::StateSet *dstate = new osg::StateSet;
-    dstate->setMode( GL_LIGHTING, osg::StateAttribute::OFF );
-    dstate->setTextureAttributeAndModes(0, tex, osg::StateAttribute::ON );
-
-    dstate->setTextureAttribute(0, new osg::TexEnv );
-
-    // clear the depth to the far plane.
-    osg::Depth* depth = new osg::Depth;
-    depth->setFunction(osg::Depth::ALWAYS);
-    depth->setRange(1.0,1.0);   
-    dstate->setAttributeAndModes(depth,osg::StateAttribute::ON );
-
-    dstate->setRenderBinDetails(-1,"RenderBin");
-
-    geom->setStateSet( dstate );
-
-    osg::Geode *geode = new osg::Geode;
-    geode->addDrawable( geom );
-
-    return geode;
-}
 
 /**
  * Update the position of the UAV
@@ -508,15 +441,8 @@ struct global_struct * initialize()
 		 
         osg::ref_ptr<osg::PositionAttitudeTransform> pat = new osg::PositionAttitudeTransform();
 
-        if (world == NULL) { //Default is to use hang glider world taken from OSG examples
-            world = makeBase();
-			 
-            root->addChild(makeSky());
-            root->addChild(makeBase());
-            root->addChild(makeTerrain());
-            root->addChild(makeTrees());
-            root->addChild(g->pat);
-            g->viewer->getView(0)->setCameraManipulator(new osgGA::TrackballManipulator());			 
+        if (world == NULL) { //No world file provided
+            diep((char*) "Dude, provide a world file");
         }
         else {
             pat->addChild(world);
