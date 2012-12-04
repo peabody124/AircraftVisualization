@@ -241,7 +241,7 @@ osg::Node* createAirplane(struct global_struct *g)
         g->uavAttitudeAndScale = new osg::MatrixTransform();
         g->uavAttitudeAndScale->setMatrix(osg::Matrixd::scale(1,1,1));
 
-        // Apply a rotation so model is NED before any other rotations
+        // Apply a rotation and scale so model is NED and appropriately sized before any other rotations
         osg::MatrixTransform *rotateModelNED = new osg::MatrixTransform();
         rotateModelNED->setMatrix(osg::Matrixd::scale(modelScale,modelScale,modelScale) * osg::Matrixd::rotate(M_PI, osg::Vec3d(0,0,1)));
         rotateModelNED->addChild( g->uav );
@@ -353,17 +353,17 @@ void updatePosition(struct global_struct *g, double *NED, double *quat)
 
     // Set the attitude (reverse the attitude)
     // Have to rotate the axes from OP NED frame to OSG frame (X east, Y north, Z up)
-    osg::Quat q(quat[1],quat[2],quat[3],quat[0]);
-    osg::Vec3d axis;
-    q.getRotate(angle,axis);
-    q.makeRotate(angle, osg::Vec3d(axis[1],axis[0],-axis[2]));
-    osg::Matrixd rot = osg::Matrixd::rotate(q);
+    osg::Quat q(quat[1],quat[2],quat[3],quat[0]); //Build the quat
+    osg::Vec3d axis; 
+    q.getRotate(angle,axis); //Extract the NED angles
+    q.makeRotate(angle, osg::Vec3d(axis[1],axis[0],-axis[2])); //Change the reference system and produce new quaternion
 
-    g->uavAttitudeAndScale->setMatrix(rot);
+    //Apply the attitude rotation
+    g->uavAttitudeAndScale->setMatrix(osg::Matrixd::rotate(q));
 }
 
 /**
- * Update the camera angle relative to the body
+ * Update the camera angle relative to the body. This would be used for a camera gymbal.
  */
 void updateCamera(struct global_struct *g, float pitch, float roll)
 {
