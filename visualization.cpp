@@ -92,10 +92,10 @@ using namespace std;
 
 //! Structure transferred over the network
 struct uav_data {
-    double q[4];
-    double NED[3];
-    double roll;
-    double pitch;
+    double q[4]; //[w x y z], which is different from OSG's quat representation, [x y z w]
+    double NED[3]; //[m]
+    double roll; //[deg]
+    double pitch; //[deg]
 };
 
 double homeLat=42.349273;
