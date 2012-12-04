@@ -102,6 +102,7 @@ double homeLat=42.349273;
 double homeLon=-71.100549;
 double homeAlt=0;
 double initialAlt=200;
+double modelScale=0.002e0;
 double initialNED[3]={0,0,0};
 string earthFile="osgearth_models/boston.earth";
 string worldFile="";
@@ -238,11 +239,11 @@ osg::Node* createAirplane(struct global_struct *g)
 
     if(g->uav) {
         g->uavAttitudeAndScale = new osg::MatrixTransform();
-        g->uavAttitudeAndScale->setMatrix(osg::Matrixd::scale(0.2e0,0.2e0,0.2e0));
+        g->uavAttitudeAndScale->setMatrix(osg::Matrixd::scale(1,1,1));
 
         // Apply a rotation so model is NED before any other rotations
         osg::MatrixTransform *rotateModelNED = new osg::MatrixTransform();
-        rotateModelNED->setMatrix(osg::Matrixd::scale(0.05e0,0.05e0,0.05e0) * osg::Matrixd::rotate(M_PI, osg::Vec3d(0,0,1)));
+        rotateModelNED->setMatrix(osg::Matrixd::scale(modelScale,modelScale,modelScale) * osg::Matrixd::rotate(M_PI, osg::Vec3d(0,0,1)));
         rotateModelNED->addChild( g->uav );
 
         g->uavAttitudeAndScale->addChild( rotateModelNED );
@@ -347,7 +348,7 @@ void updatePosition(struct global_struct *g, double *NED, double *quat)
         LLA[2] = HOME[2] + NED[2] / T[2];
         g->uavPos->getLocator()->setPosition( osg::Vec3d(LLA[1], LLA[0], LLA[2]) );  // Note this takes longtitude first
     } else {
-        g->pat->setPosition(osg::Vec3d(NED[1] / 20.0, NED[0] / 20.0, -NED[2] / 20.0 + 2));
+        g->pat->setPosition(osg::Vec3d(NED[1], NED[0] , -NED[2])); //Convert to ENU
     }
 
     // Set the attitude (reverse the attitude)
@@ -428,7 +429,6 @@ struct global_struct * initialize()
 
         osg::Node* airplane = createAirplane(g);
         g->pat = new osg::PositionAttitudeTransform();
-        g->pat->setScale(osg::Vec3d(0.02,0.02,0.02));
         g->pat->addChild(airplane);
 		 
         osg::ref_ptr<osg::PositionAttitudeTransform> pat = new osg::PositionAttitudeTransform();
