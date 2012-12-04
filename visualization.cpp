@@ -145,6 +145,81 @@ struct global_struct {
     enum magic_value magic;
 };
 
+struct SnapImage : public osg::Camera::DrawCallback
+{
+    SnapImage(const std::string& filename):
+	_filename(filename),
+	_snapImage(false)
+    {
+        _image = new osg::Image;        
+    }
+	
+    virtual void operator () (osg::RenderInfo& renderInfo) const
+    {
+		
+        if (!_snapImage) return;
+		
+        osg::notify(osg::NOTICE)<<"Camera callback"<<std::endl;
+		
+        osg::Camera* camera = renderInfo.getCurrentCamera();
+        osg::Viewport* viewport = camera ? camera->getViewport() : 0;
+		
+        osg::notify(osg::NOTICE)<<"Camera callback "<<camera<<" "<<viewport<<std::endl;
+		
+        if (viewport && _image.valid())
+        {
+            _image->readPixels(int(viewport->x()),int(viewport->y()),int(viewport->width()),int(viewport->height()),
+                               GL_RGBA,
+                               GL_UNSIGNED_BYTE);
+            osgDB::writeImageFile(*_image, _filename);
+            
+            osg::notify(osg::NOTICE)<<"Taken screenshot, and written to '"<<_filename<<"'"<<std::endl;             
+        }
+		
+        _snapImage = false;
+    }
+	
+    std::string                         _filename;
+    mutable bool                        _snapImage;
+    mutable osg::ref_ptr<osg::Image>    _image;
+};
+
+struct SnapeImageHandler : public osgGA::GUIEventHandler
+{
+	
+    SnapeImageHandler(int key,SnapImage* si):
+	_key(key),
+	_snapImage(si) {}
+	
+    bool handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActionAdapter&)
+    {
+        if (ea.getHandled()) return false;
+		
+        switch(ea.getEventType())
+        {
+            case(osgGA::GUIEventAdapter::KEYUP):
+            {
+                if (ea.getKey() == _key)
+                {
+                    osg::notify(osg::NOTICE)<<"event handler"<<std::endl;
+                    _snapImage->_snapImage = true;
+                    return true;
+                }
+				
+                break;
+            }
+			default:
+				break;
+        }
+		
+        return false;
+    }
+    
+    int                     _key;
+    osg::ref_ptr<SnapImage> _snapImage;
+};
+
+
 //! Provide an error message
 void diep(char *s)
 {
