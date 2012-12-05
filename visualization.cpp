@@ -45,7 +45,6 @@
 #include <osgViewer/Viewer>
 #include <osgViewer/ViewerEventHandlers>
 
-#include <osgGA/NodeTrackerManipulator>
 #include <osgGA/TrackballManipulator>
 #include <osgGA/FlightManipulator>
 #include <osgGA/StateSetManipulator>
@@ -92,17 +91,19 @@ using namespace std;
 
 //! Structure transferred over the network
 struct uav_data {
-    double q[4];
-    double NED[3];
-    double roll;
-    double pitch;
+    double q[4]; //[w x y z], which is different from OSG's quat representation, [x y z w]
+    double NED[3]; //[m]
+    double roll; //[deg]
+    double pitch; //[deg]
 };
 
 double homeLat=42.349273;
 double homeLon=-71.100549;
 double homeAlt=0;
 double initialAlt=200;
+double modelScale=0.001e0;
 double initialNED[3]={0,0,0};
+osg::Vec3d fpvCameraOffset(0.0, 0.0, 0.1); //This is the distance from the center of the UAV to the camera lens, in XYZ (a.k.a ENU) body reference frame
 string earthFile="osgearth_models/boston.earth";
 string worldFile="";
 string modelFile="airframe_models/joe_cnc/J14-QT_X.3DS";
@@ -132,9 +133,6 @@ struct global_struct {
 
     osg::ref_ptr<osgEarth::MapNode> mapNode;
 
-    //! The tracker which makes the FPV camera track the UAV
-    osg::ref_ptr<osgGA::NodeTrackerManipulator> tracker;
-
     //! The manipulator for the main view
     osg::ref_ptr<EarthManipulator> manip;
 
@@ -143,6 +141,81 @@ struct global_struct {
 
     enum magic_value magic;
 };
+
+struct SnapImage : public osg::Camera::DrawCallback
+{
+    SnapImage(const std::string& filename):
+	_filename(filename),
+	_snapImage(false)
+    {
+        _image = new osg::Image;        
+    }
+	
+    virtual void operator () (osg::RenderInfo& renderInfo) const
+    {
+		
+        if (!_snapImage) return;
+		
+        osg::notify(osg::NOTICE)<<"Camera callback"<<std::endl;
+		
+        osg::Camera* camera = renderInfo.getCurrentCamera();
+        osg::Viewport* viewport = camera ? camera->getViewport() : 0;
+		
+        osg::notify(osg::NOTICE)<<"Camera callback "<<camera<<" "<<viewport<<std::endl;
+		
+        if (viewport && _image.valid())
+        {
+            _image->readPixels(int(viewport->x()),int(viewport->y()),int(viewport->width()),int(viewport->height()),
+                               GL_RGBA,
+                               GL_UNSIGNED_BYTE);
+            osgDB::writeImageFile(*_image, _filename);
+            
+            osg::notify(osg::NOTICE)<<"Taken screenshot, and written to '"<<_filename<<"'"<<std::endl;             
+        }
+		
+        _snapImage = false;
+    }
+	
+    std::string                         _filename;
+    mutable bool                        _snapImage;
+    mutable osg::ref_ptr<osg::Image>    _image;
+};
+
+struct SnapeImageHandler : public osgGA::GUIEventHandler
+{
+	
+    SnapeImageHandler(int key,SnapImage* si):
+	_key(key),
+	_snapImage(si) {}
+	
+    bool handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActionAdapter&)
+    {
+        if (ea.getHandled()) return false;
+		
+        switch(ea.getEventType())
+        {
+            case(osgGA::GUIEventAdapter::KEYUP):
+            {
+                if (ea.getKey() == _key)
+                {
+                    osg::notify(osg::NOTICE)<<"event handler"<<std::endl;
+                    _snapImage->_snapImage = true;
+                    return true;
+                }
+				
+                break;
+            }
+			default:
+				break;
+        }
+		
+        return false;
+    }
+    
+    int                     _key;
+    osg::ref_ptr<SnapImage> _snapImage;
+};
+
 
 //! Provide an error message
 void diep(char *s)
@@ -238,11 +311,11 @@ osg::Node* createAirplane(struct global_struct *g)
 
     if(g->uav) {
         g->uavAttitudeAndScale = new osg::MatrixTransform();
-        g->uavAttitudeAndScale->setMatrix(osg::Matrixd::scale(0.2e0,0.2e0,0.2e0));
+        g->uavAttitudeAndScale->setMatrix(osg::Matrixd::scale(1,1,1));
 
-        // Apply a rotation so model is NED before any other rotations
+        // Apply a rotation and scale so model is NED and appropriately sized before any other rotations
         osg::MatrixTransform *rotateModelNED = new osg::MatrixTransform();
-        rotateModelNED->setMatrix(osg::Matrixd::scale(0.05e0,0.05e0,0.05e0) * osg::Matrixd::rotate(M_PI, osg::Vec3d(0,0,1)));
+        rotateModelNED->setMatrix(osg::Matrixd::scale(modelScale,modelScale,modelScale) * osg::Matrixd::rotate(M_PI, osg::Vec3d(0,0,1)));
         rotateModelNED->addChild( g->uav );
 
         g->uavAttitudeAndScale->addChild( rotateModelNED );
@@ -253,73 +326,6 @@ osg::Node* createAirplane(struct global_struct *g)
     return model.release();
 }
 
-/**
- * Create a simple scene to fly around
- */
-osg::Node *makeBase( void )
-{
-    int i, c;
-    float theta;
-    float ir = 20.0f;
-
-    osg::Vec3Array *coords = new osg::Vec3Array(19);
-    osg::Vec2Array *tcoords = new osg::Vec2Array(19);
-    osg::Vec4Array *colors = new osg::Vec4Array(1);
-
-    (*colors)[0].set(1.0f,1.0f,1.0f,1.0f);
-
-    c = 0;
-    (*coords)[c].set(0.0f,0.0f,0.0f);
-    (*tcoords)[c].set(0.0f,0.0f);
-    
-    for( i = 0; i <= 18; i++ )
-    {
-        theta = osg::DegreesToRadians((float)i * 20.0);
-
-        (*coords)[c].set(ir * cosf( theta ), ir * sinf( theta ), 0.0f);
-        (*tcoords)[c].set((*coords)[c][0]/36.0f,(*coords)[c][1]/36.0f);
-
-        c++;
-    }
-
-    osg::Geometry *geom = new osg::Geometry;
-
-    geom->setVertexArray( coords );
-
-    geom->setTexCoordArray( 0, tcoords );
-
-    geom->setColorArray( colors );
-    geom->setColorBinding( osg::Geometry::BIND_OVERALL );
-
-    geom->addPrimitiveSet( new osg::DrawArrays(osg::PrimitiveSet::TRIANGLE_FAN,0,19) );
-
-    osg::Texture2D *tex = new osg::Texture2D;
-
-    tex->setImage(osgDB::readImageFile("Images/water.rgb"));
-    tex->setWrap( osg::Texture2D::WRAP_S, osg::Texture2D::REPEAT );
-    tex->setWrap( osg::Texture2D::WRAP_T, osg::Texture2D::REPEAT );
-
-    osg::StateSet *dstate = new osg::StateSet;
-    dstate->setMode( GL_LIGHTING, osg::StateAttribute::OFF );
-    dstate->setTextureAttributeAndModes(0, tex, osg::StateAttribute::ON );
-
-    dstate->setTextureAttribute(0, new osg::TexEnv );
-
-    // clear the depth to the far plane.
-    osg::Depth* depth = new osg::Depth;
-    depth->setFunction(osg::Depth::ALWAYS);
-    depth->setRange(1.0,1.0);   
-    dstate->setAttributeAndModes(depth,osg::StateAttribute::ON );
-
-    dstate->setRenderBinDetails(-1,"RenderBin");
-
-    geom->setStateSet( dstate );
-
-    osg::Geode *geode = new osg::Geode;
-    geode->addDrawable( geom );
-
-    return geode;
-}
 
 /**
  * Update the position of the UAV
@@ -347,33 +353,49 @@ void updatePosition(struct global_struct *g, double *NED, double *quat)
         LLA[2] = HOME[2] + NED[2] / T[2];
         g->uavPos->getLocator()->setPosition( osg::Vec3d(LLA[1], LLA[0], LLA[2]) );  // Note this takes longtitude first
     } else {
-        g->pat->setPosition(osg::Vec3d(NED[1] / 20.0, NED[0] / 20.0, -NED[2] / 20.0 + 2));
+        g->pat->setPosition(osg::Vec3d(NED[1], NED[0] , -NED[2])); //Convert to ENU
     }
 
     // Set the attitude (reverse the attitude)
     // Have to rotate the axes from OP NED frame to OSG frame (X east, Y north, Z up)
-    osg::Quat q(quat[1],quat[2],quat[3],quat[0]);
-    osg::Vec3d axis;
-    q.getRotate(angle,axis);
-    q.makeRotate(angle, osg::Vec3d(axis[1],axis[0],-axis[2]));
-    osg::Matrixd rot = osg::Matrixd::rotate(q);
+    osg::Quat q(quat[1],quat[2],quat[3],quat[0]); //Build the quat
+    osg::Vec3d axis; 
+    q.getRotate(angle,axis); //Extract the NED angles
+    q.makeRotate(angle, osg::Vec3d(axis[1],axis[0],-axis[2])); //Change the reference system and produce new quaternion
 
-    g->uavAttitudeAndScale->setMatrix(rot);
+    //Apply the attitude rotation
+    g->uavAttitudeAndScale->setMatrix(osg::Matrixd::rotate(q));
+	
 }
 
 /**
- * Update the camera angle relative to the body
+ * Update the camera's viewpoint. In addition, rotate the angle relative to the body. This would be used for a camera gimbal.
  */
 void updateCamera(struct global_struct *g, float pitch, float roll)
 {
-    osg::Matrixd yawMat, pitchMat, rollMat;
+	osg::Matrixd trans;
+    if (g->earth) {
+		trans.makeTranslate(g->uavPos->getLocator()->getPosition());
+	}
+	else{
+		trans.makeTranslate(g->pat->getPosition());
+	}
     
-    rollMat.makeRotate(roll / 180.0 * M_PI, osg::Vec3d(0,1,0));    
-    pitchMat.makeRotate(-M_PI/2.0 + pitch / 180.0 * M_PI,osg::Vec3d(1,0,0));
-    yawMat.makeRotate(M_PI, osg::Vec3d(0,0,1));
-
-    // We need a 180 degree yaw rotation to view "forward" with the quad
-    g->tracker->setByMatrix(yawMat * rollMat * pitchMat);
+	osg::Matrixd yawMat, pitchMat, rollMat;
+    
+    rollMat.makeRotate(roll/180.0 * M_PI, osg::Vec3d(0,1,0));    
+    pitchMat.makeRotate(pitch/180.0 * M_PI, osg::Vec3d(1,0,0));
+    yawMat.makeRotate(0, osg::Vec3d(0,0,1));
+	
+	// Apply the attitude and position to the FPV camera. ORDER IS IMPORTANT.
+	osg::Matrixd RotTrans(osg::Matrixd::identity()); //Start from scratch
+	RotTrans.preMultRotate(osg::Quat(osg::DegreesToRadians(90.0),osg::Vec3d(1.0, 0.0, 0.0))); //Rotate OSG camera into forward frame
+	RotTrans.postMultTranslate(fpvCameraOffset); //Shift camera relative to body
+	RotTrans.postMult(g->uavAttitudeAndScale->getMatrix()); //Rotate vehicle
+	RotTrans.postMult(yawMat * rollMat * pitchMat);	//Rotate the camera angle relative to the body. This would be used for a camera gimbal.
+	RotTrans.postMult(trans); //Shift the camera to the UAV's position
+	
+	g->viewer->getView(1)->getCameraManipulator()->setByMatrix(RotTrans);
 }
 
 extern osg::Node *makeTerrain( void );
@@ -428,25 +450,24 @@ struct global_struct * initialize()
 
         osg::Node* airplane = createAirplane(g);
         g->pat = new osg::PositionAttitudeTransform();
-        g->pat->setScale(osg::Vec3d(0.02,0.02,0.02));
         g->pat->addChild(airplane);
 		 
         osg::ref_ptr<osg::PositionAttitudeTransform> pat = new osg::PositionAttitudeTransform();
 
-        if (world == NULL) { //Default is to use hang glider world taken from OSG examples
-            world = makeBase();
-			 
-            root->addChild(makeSky());
-            root->addChild(makeBase());
-            root->addChild(makeTerrain());
-            root->addChild(makeTrees());
-            root->addChild(g->pat);
-            g->viewer->getView(0)->setCameraManipulator(new osgGA::TrackballManipulator());			 
+        if (world == NULL) { //No world file provided
+            diep((char*) "Dude, provide a world file");
         }
         else {
             pat->addChild(world);
-            pat->setScale(osg::Vec3d(.0025*200,.0025*200,.0025*200)); //This sets the world scale. It should be adjusted to be as close as possible to 1 meter/unit in OSG
-            pat->setPosition(osg::Vec3f(0,0,16*200));
+            pat->setScale(osg::Vec3d(1,1,1)); //This sets the world scale. It should be adjusted to be as close as possible to 1 meter/unit in OSG
+            pat->setPosition(osg::Vec3f(2,0,0)); //This sets the world position relative to the origin
+
+            //Rotate world into local coordinates
+            osg::Matrixd Rot(osg::Matrixd::identity());
+            Rot.preMultRotate(osg::Quat(osg::DegreesToRadians(90.0),osg::Vec3d(0.0, 1.0, 0.0)));
+            Rot.preMultRotate(osg::Quat(osg::DegreesToRadians(90.0),osg::Vec3d(0.0, 0.0, 1.0)));
+            pat->setAttitude(osg::Quat(Rot.getRotate()));
+			
             root->addChild(pat);
         }
         root->addChild(g->pat);
@@ -463,15 +484,17 @@ struct global_struct * initialize()
     g->viewer->getView(0)->addEventHandler(new osgViewer::StatsHandler);
     g->viewer->getView(0)->addEventHandler(new osgViewer::ThreadingHandler);
     
-    g->tracker = new osgGA::NodeTrackerManipulator();
-    g->tracker->setTrackerMode( osgGA::NodeTrackerManipulator::NODE_CENTER_AND_ROTATION );
-    g->tracker->setNode(g->uav);
-    g->tracker->setTrackNode(g->uav);
-    g->tracker->setMinimumDistance(100); 
-    g->tracker->setDistance(500); 
-    g->tracker->setElevation(initialAlt+100); 
-    g->tracker->setHomePosition( osg::Vec3f(0.f,40.f,40.f), osg::Vec3f(0.f,0.f,0.f), osg::Vec3f(0,0,1) ); 
-    g->viewer->getView(1)->setCameraManipulator(g->tracker);
+    //Set FOV. Do this by first getting the current camera settings, and then changing only the FOV
+    double fovy, aspectRatio, zNear, zFar; 
+    double desiredFOV=150;
+    g->viewer->getView(1)->getCamera()->getProjectionMatrixAsPerspective(fovy, aspectRatio, zNear, zFar); 
+    g->viewer->getView(1)->getCamera()->setProjectionMatrixAsPerspective(desiredFOV, aspectRatio, zNear, zFar); 
+
+    // Instead of adding the tracker, add the trackball manipulator
+    g->viewer->getView(1)->setCameraManipulator(new osgGA::TrackballManipulator());
+
+    //Set background color to white
+    g->viewer->getView(1)->getCamera()->setClearColor(osg::Vec4(1.0, 1.0, 1.0, 1.0));
 
     return g;
 }
@@ -504,8 +527,8 @@ void *run_thread(void * arg)
     {
         recvfrom(s,&uav_data,sizeof(uav_data),0,&client,&client_len);
 
-        updateCamera(g, uav_data.pitch, uav_data.roll);
-        updatePosition(g, uav_data.NED, uav_data.q);
+        updatePosition(g, uav_data.NED, uav_data.q); //NOTE: Order is important. This one first...
+        updateCamera(g, uav_data.pitch, uav_data.roll);//... and this one second
     }
     
     close(s);
