@@ -45,7 +45,6 @@
 #include <osgViewer/Viewer>
 #include <osgViewer/ViewerEventHandlers>
 
-#include <osgGA/NodeTrackerManipulator>
 #include <osgGA/TrackballManipulator>
 #include <osgGA/FlightManipulator>
 #include <osgGA/StateSetManipulator>
@@ -102,8 +101,9 @@ double homeLat=42.349273;
 double homeLon=-71.100549;
 double homeAlt=0;
 double initialAlt=200;
-double modelScale=0.002e0;
+double modelScale=0.001e0;
 double initialNED[3]={0,0,0};
+osg::Vec3d fpvCameraOffset(0.0, 0.0, 0.1); //This is the distance from the center of the UAV to the camera lens, in XYZ (a.k.a ENU) body reference frame
 string earthFile="osgearth_models/boston.earth";
 string worldFile="";
 string modelFile="airframe_models/joe_cnc/J14-QT_X.3DS";
@@ -132,9 +132,6 @@ struct global_struct {
     osg::ref_ptr<osg::Node> uav;
 
     osg::ref_ptr<osgEarth::MapNode> mapNode;
-
-    //! The tracker which makes the FPV camera track the UAV
-    osg::ref_ptr<osgGA::NodeTrackerManipulator> tracker;
 
     //! The manipulator for the main view
     osg::ref_ptr<EarthManipulator> manip;
@@ -368,21 +365,37 @@ void updatePosition(struct global_struct *g, double *NED, double *quat)
 
     //Apply the attitude rotation
     g->uavAttitudeAndScale->setMatrix(osg::Matrixd::rotate(q));
+	
 }
 
 /**
- * Update the camera angle relative to the body. This would be used for a camera gymbal.
+ * Update the camera's viewpoint. In addition, rotate the angle relative to the body. This would be used for a camera gimbal.
  */
 void updateCamera(struct global_struct *g, float pitch, float roll)
 {
-    osg::Matrixd yawMat, pitchMat, rollMat;
+	osg::Matrixd trans;
+    if (g->earth) {
+		trans.makeTranslate(g->uavPos->getLocator()->getPosition());
+	}
+	else{
+		trans.makeTranslate(g->pat->getPosition());
+	}
     
-    rollMat.makeRotate(roll / 180.0 * M_PI, osg::Vec3d(0,1,0));    
-    pitchMat.makeRotate(-M_PI/2.0 + pitch / 180.0 * M_PI,osg::Vec3d(1,0,0));
-    yawMat.makeRotate(M_PI, osg::Vec3d(0,0,1));
-
-    // We need a 180 degree yaw rotation to view "forward" with the quad
-    g->tracker->setByMatrix(yawMat * rollMat * pitchMat);
+	osg::Matrixd yawMat, pitchMat, rollMat;
+    
+    rollMat.makeRotate(roll/180.0 * M_PI, osg::Vec3d(0,1,0));    
+    pitchMat.makeRotate(pitch/180.0 * M_PI, osg::Vec3d(1,0,0));
+    yawMat.makeRotate(0, osg::Vec3d(0,0,1));
+	
+	// Apply the attitude and position to the FPV camera. ORDER IS IMPORTANT.
+	osg::Matrixd RotTrans(osg::Matrixd::identity()); //Start from scratch
+	RotTrans.preMultRotate(osg::Quat(osg::DegreesToRadians(90.0),osg::Vec3d(1.0, 0.0, 0.0))); //Rotate OSG camera into forward frame
+	RotTrans.postMultTranslate(fpvCameraOffset); //Shift camera relative to body
+	RotTrans.postMult(g->uavAttitudeAndScale->getMatrix()); //Rotate vehicle
+	RotTrans.postMult(yawMat * rollMat * pitchMat);	//Rotate the camera angle relative to the body. This would be used for a camera gimbal.
+	RotTrans.postMult(trans); //Shift the camera to the UAV's position
+	
+	g->viewer->getView(1)->getCameraManipulator()->setByMatrix(RotTrans);
 }
 
 extern osg::Node *makeTerrain( void );
@@ -446,8 +459,15 @@ struct global_struct * initialize()
         }
         else {
             pat->addChild(world);
-            pat->setScale(osg::Vec3d(.0025*200,.0025*200,.0025*200)); //This sets the world scale. It should be adjusted to be as close as possible to 1 meter/unit in OSG
-            pat->setPosition(osg::Vec3f(0,0,16*200));
+            pat->setScale(osg::Vec3d(1,1,1)); //This sets the world scale. It should be adjusted to be as close as possible to 1 meter/unit in OSG
+            pat->setPosition(osg::Vec3f(2,0,0)); //This sets the world position relative to the origin
+
+            //Rotate world into local coordinates
+            osg::Matrixd Rot(osg::Matrixd::identity());
+            Rot.preMultRotate(osg::Quat(osg::DegreesToRadians(90.0),osg::Vec3d(0.0, 1.0, 0.0)));
+            Rot.preMultRotate(osg::Quat(osg::DegreesToRadians(90.0),osg::Vec3d(0.0, 0.0, 1.0)));
+            pat->setAttitude(osg::Quat(Rot.getRotate()));
+			
             root->addChild(pat);
         }
         root->addChild(g->pat);
@@ -464,15 +484,17 @@ struct global_struct * initialize()
     g->viewer->getView(0)->addEventHandler(new osgViewer::StatsHandler);
     g->viewer->getView(0)->addEventHandler(new osgViewer::ThreadingHandler);
     
-    g->tracker = new osgGA::NodeTrackerManipulator();
-    g->tracker->setTrackerMode( osgGA::NodeTrackerManipulator::NODE_CENTER_AND_ROTATION );
-    g->tracker->setNode(g->uav);
-    g->tracker->setTrackNode(g->uav);
-    g->tracker->setMinimumDistance(100); 
-    g->tracker->setDistance(500); 
-    g->tracker->setElevation(initialAlt+100); 
-    g->tracker->setHomePosition( osg::Vec3f(0.f,40.f,40.f), osg::Vec3f(0.f,0.f,0.f), osg::Vec3f(0,0,1) ); 
-    g->viewer->getView(1)->setCameraManipulator(g->tracker);
+    //Set FOV. Do this by first getting the current camera settings, and then changing only the FOV
+    double fovy, aspectRatio, zNear, zFar; 
+    double desiredFOV=150;
+    g->viewer->getView(1)->getCamera()->getProjectionMatrixAsPerspective(fovy, aspectRatio, zNear, zFar); 
+    g->viewer->getView(1)->getCamera()->setProjectionMatrixAsPerspective(desiredFOV, aspectRatio, zNear, zFar); 
+
+    // Instead of adding the tracker, add the trackball manipulator
+    g->viewer->getView(1)->setCameraManipulator(new osgGA::TrackballManipulator());
+
+    //Set background color to white
+    g->viewer->getView(1)->getCamera()->setClearColor(osg::Vec4(1.0, 1.0, 1.0, 1.0));
 
     return g;
 }
@@ -505,8 +527,8 @@ void *run_thread(void * arg)
     {
         recvfrom(s,&uav_data,sizeof(uav_data),0,&client,&client_len);
 
-        updateCamera(g, uav_data.pitch, uav_data.roll);
-        updatePosition(g, uav_data.NED, uav_data.q);
+        updatePosition(g, uav_data.NED, uav_data.q); //NOTE: Order is important. This one first...
+        updateCamera(g, uav_data.pitch, uav_data.roll);//... and this one second
     }
     
     close(s);
